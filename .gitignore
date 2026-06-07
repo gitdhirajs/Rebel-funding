@@ -1,19 +1,47 @@
 ```
-# Data cache files
-price_cache/
+# Configuration and workflow files
+.github/
 
-# HTML reports
-*.html
-
-# Python compiled files
-*.pyc
-__pycache__/
-
-# Logs
+# Logs and temporary files
 *.log
+*.tmp
 
-# Environment files
+# Environment variables
 .env
 .env.local
 *.env.*
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dependencies and build artifacts
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.class
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+*.out
+dist/
+build/
+target/
+.venv/
+venv/
+.env
+.env.local
+*.env.*
+coverage/
+htmlcov/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.gradle/
 ```
