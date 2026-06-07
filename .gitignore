@@ -1,19 +1,4 @@
 ```
-# Data cache files
-price_cache/
-
-# HTML reports
-*.html
-
-# Python compiled files
-*.pyc
-__pycache__/
-
-# Logs
-*.log
-
-# Environment files
-.env
-.env.local
-*.env.*
+# CI/CD
+.github/
 ```
