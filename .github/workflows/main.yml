@@ -1,11 +1,49 @@
-name: My Workflow
+name: Trade Analysis Dashboard
+
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    
     steps:
-    - uses: actions/checkout@v4
-    - name: Run script
-      run: echo "Hello from GitHub!"
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install yfinance pandas openpyxl
+    
+    - name: Run Trade Analysis Script
+      run: |
+        python trader_analysis.py --use_local --output ./trader_dashboard.html
+    
+    - name: Upload Dashboard Artifact
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: trader-analysis-dashboard
+        path: trader_dashboard.html
+        retention-days: 30
+    
+    - name: Commit and push dashboard
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        if [ -f trader_dashboard.html ]; then
+          git add trader_dashboard.html
+          git commit -m "Add trade analysis dashboard" || echo "No changes to commit"
+          git push
+        fi
+      continue-on-error: true
