@@ -805,11 +805,29 @@ def generate_html_dashboard(trades_by_trader: Dict[str, pd.DataFrame],
                 </select>
             </div>
             
+                        <div class="control-group">
+                <label for="interval-select">Interval</label>
+                <select id="interval-select" onchange="changeInterval()" disabled>
+                    <option value="1h">1 Hour (1H)</option>
+                    <option value="15m">15 Minutes (15min)</option>
+                </select>
+            </div>
+
             <div class="control-group" style="justify-content: flex-end;">
                 <button onclick="renderChart()">📈 Display Chart</button>
             </div>
         </div>
-        
+
+        <div class="navigation-controls" style="background: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; margin-bottom: 20px; display: none;" id="nav-controls">
+            <div style="display: flex; align-items: center; justify-content: center; gap: 20px;">
+                <button onclick="previousTrade()" id="prev-btn" disabled>⬅️ Previous</button>
+                <span style="color: #00d4ff; font-weight: bold;">
+                    Trade <span id="current-trade-num">1</span> of <span id="total-trades">0</span>
+                </span>
+                <button onclick="nextTrade()" id="next-btn" disabled>Next ➡️</button>
+            </div>
+        </div>
+
         <div class="chart-container">
             <div id="chart-status" style="text-align: center; padding: 40px; color: #00d4ff;">
                 Select a trader and symbol, then click "Display Chart" to view the price chart with trades
@@ -986,15 +1004,36 @@ def generate_html_dashboard(trades_by_trader: Dict[str, pd.DataFrame],
             }}
         }}
         
-        function loadChartData() {{
+                function loadChartData() {{
             const traderSelect = document.getElementById('trader-select');
             const symbolSelect = document.getElementById('symbol-select');
+            const intervalSelect = document.getElementById('interval-select');
+            const navControls = document.getElementById('nav-controls');
             const selectedTrader = traderSelect.value;
             const selectedSymbol = symbolSelect.value;
-            
+
             if (!selectedTrader || !selectedSymbol) {{
                 return;
             }}
+
+            currentTrades = tradersData[selectedTrader].analyses_by_symbol[selectedSymbol];
+            allTradesForSymbol = [...currentTrades];
+            currentTradeIndex = 0;
+
+            if (!currentTrades || currentTrades.length === 0) {{
+                alert('No trade data available for this selection');
+                return;
+            }}
+
+            // Enable interval select and navigation controls
+            intervalSelect.disabled = false;
+            navControls.style.display = 'block';
+            updateNavigationButtons();
+
+            document.getElementById('chart-status').innerHTML =
+                '✅ Loaded ' + currentTrades.length + ' trades for ' + selectedSymbol +
+                '. Click "Display Chart" to visualize or use Previous/Next buttons.';
+        }}
             
             currentTrades = tradersData[selectedTrader].analyses_by_symbol[selectedSymbol];
             
@@ -1163,8 +1202,79 @@ def generate_html_dashboard(trades_by_trader: Dict[str, pd.DataFrame],
             }});
         }}
         
-        // Initialize on page load
-        document.addEventListener('DOMContentLoaded', () => {{
+        // Current trade index for navigation
+        let currentTradeIndex = 0;
+        let allTradesForSymbol = [];
+
+        function changeInterval() {{
+            const intervalSelect = document.getElementById('interval-select');
+            const selectedInterval = intervalSelect.value;
+            console.log('Changing interval to:', selectedInterval);
+            // Re-fetch data with new interval and re-render chart
+            if (currentTrades && currentTrades.length > 0) {{
+                renderChart();
+            }}
+        }}
+
+        function updateNavigationButtons() {{
+            const prevBtn = document.getElementById('prev-btn');
+            const nextBtn = document.getElementById('next-btn');
+            const currentNum = document.getElementById('current-trade-num');
+            
+            if (allTradesForSymbol.length === 0) {{
+                prevBtn.disabled = true;
+                nextBtn.disabled = true;
+                return;
+            }}
+            
+            prevBtn.disabled = currentTradeIndex <= 0;
+            nextBtn.disabled = currentTradeIndex >= allTradesForSymbol.length - 1;
+            currentNum.textContent = currentTradeIndex + 1;
+            document.getElementById('total-trades').textContent = allTradesForSymbol.length;
+        }}
+
+        function previousTrade() {{
+            if (currentTradeIndex > 0) {{
+                currentTradeIndex--;
+                displayAnalysisTable([allTradesForSymbol[currentTradeIndex]]);
+                updateNavigationButtons();
+                highlightCurrentTradeOnChart(allTradesForSymbol[currentTradeIndex]);
+            }}
+        }}
+
+        function nextTrade() {{
+            if (currentTradeIndex < allTradesForSymbol.length - 1) {{
+                currentTradeIndex++;
+                displayAnalysisTable([allTradesForSymbol[currentTradeIndex]]);
+                updateNavigationButtons();
+                highlightCurrentTradeOnChart(allTradesForSymbol[currentTradeIndex]);
+            }}
+        }}
+
+        function highlightCurrentTradeOnChart(trade) {{
+            // Highlight the current trade on the chart with a vertical line or marker emphasis
+            if (!mainChart || !candleSeries) return;
+            
+            // Parse the trade's open time
+            const openTime = new Date(trade.opened).getTime() / 1000;
+            
+            // Create a marker to emphasize current trade
+            const markers = [];
+            const isLong = trade.direction.toUpperCase() === 'BUY';
+            
+            markers.push({{
+                time: openTime,
+                position: isLong ? 'belowBar' : 'aboveBar',
+                color: '#ff9800',
+                shape: isLong ? 'arrowUp' : 'arrowDown',
+                text: 'CURRENT',
+                size: 2
+            }});
+            
+            candleSeries.setMarkers(markers);
+        }}
+
+        // Initialize on page load, () => {{
             // Charts will be initialized when user clicks "Display Chart"
         }});
     </script>
