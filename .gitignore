@@ -1,47 +1,7 @@
 ```
-# Configuration and workflow files
-.github/
+# Data cache files
+price_cache/
 
-# Logs and temporary files
-*.log
-*.tmp
-
-# Environment variables
-.env
-.env.local
-*.env.*
-
-# Editor/IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Dependencies and build artifacts
-node_modules/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.class
-*.o
-*.obj
-*.so
-*.dll
-*.exe
-*.out
-dist/
-build/
-target/
-.venv/
-venv/
-.env
-.env.local
-*.env.*
-coverage/
-htmlcov/
-.coverage
-.mypy_cache/
-.pytest_cache/
-.gradle/
+# HTML reports
+*.html
 ```
