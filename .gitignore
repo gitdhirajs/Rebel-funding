@@ -1,17 +1,31 @@
+```
 # Python
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
-*.egg-info/
-
-# IDE / Tools
-.qwen/
-.yf_cache/
-.vscode/
-
-# Temp files
-~$*.xlsx
-*.tmp
-
-# Config with secrets
-config.py
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+.MF
+tags
+TAGS
+.IDE/
+.DS_Store
+Thumbs.db
+```

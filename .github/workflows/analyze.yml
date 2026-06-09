@@ -1,0 +1,37 @@
+name: Analyze Trader Data
+
+on:
+  push:
+    paths:
+      - 'trader_trades/**'
+      - 'analyze.py'
+  workflow_dispatch:
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas matplotlib openpyxl
+
+      - name: Run analysis
+        run: python analyze.py
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trader-analysis-results
+          path: |
+            summary.csv
+            comparison.txt
+            style_distribution.png

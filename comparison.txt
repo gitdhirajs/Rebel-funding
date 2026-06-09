@@ -1,0 +1,23 @@
+=== Top 10 Traders (by total profit) vs All Traders ===
+
+                      All_Traders        Top_10
+total_trades         1.153298e+02  3.314000e+02
+win_rate             6.098306e-01  6.025406e-01
+avg_holding_seconds  3.103026e+06  6.782411e+06
+avg_profit           1.140414e+03  1.702505e+03
+avg_win              2.569544e+03  5.201241e+03
+avg_loss            -9.852658e+02 -6.073742e+03
+profit_factor                 inf  5.346021e+00
+
+Top 10 Traders:
+  trader_id  total_profit  win_rate        style
+  Emanuel C     820359.36  0.860963 Swing Trader
+  Mathews T     429060.36  0.523188 Swing Trader
+    Kevin B     306688.32  0.872549 Swing Trader
+Galymzhan M     226564.21  0.317073 Swing Trader
+Imomoboye P     195138.56  0.356877 Swing Trader
+    Edwin M     194482.10  0.370256 Swing Trader
+  Kwanele N     191957.96  0.763033 Swing Trader
+Enkh-Amar S     185890.71  0.692308 Swing Trader
+ Blessing M     179744.88  0.475771 Swing Trader
+ Benyamin P     178544.35  0.793388 Swing Trader
