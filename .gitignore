@@ -1,31 +1,17 @@
-# Excel files
-*.xlsx
-
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-*.pyd
-.Python
-venv/
-.env
-.env.local
-.env.*
-.pytest_cache/
-.mypy_cache/
-.coverage
-htmlcov/
+*.egg-info/
 
-# Logs
-*.log
-
-# Temporary files
-*.tmp
-*.swp
-*~
-.DS_Store
-Thumbs.db
-
-# IDE
+# IDE / Tools
+.qwen/
+.yf_cache/
 .vscode/
-.idea/
+
+# Temp files
+~$*.xlsx
+*.tmp
+
+# Config with secrets
+config.py
