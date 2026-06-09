@@ -30,7 +30,7 @@ jobs:
         python trader_analysis.py --use_local --output ./trader_dashboard.html
     
     - name: Upload Dashboard Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: trader-analysis-dashboard
