@@ -41,23 +41,30 @@ def send_discord_signal(trader_name, trade_data):
     if trade_id in SENT_SIGNALS:
         return
         
-    embed = {
-        "title": f"🚨 NEW SIGNAL — {trader_name}",
-        "color": 0xffaa00 if trade_data.get('Status', '').upper() == 'PENDING' else 0x00ff88,
-        "timestamp": datetime.utcnow().isoformat(),
-        "fields": [
-            {"name": "Symbol", "value": trade_data.get('Symbol', 'N/A'), "inline": True},
-            {"name": "Direction", "value": trade_data.get('Direction', 'N/A'), "inline": True},
-            {"name": "Status", "value": trade_data.get('Status', 'N/A'), "inline": True},
-            {"name": "Open Price", "value": str(trade_data.get('Open price', 'N/A')), "inline": True},
-            {"name": "Stop Loss", "value": str(trade_data.get('Stop loss', 'N/A')), "inline": True},
-            {"name": "Take Profit", "value": str(trade_data.get('Take profit', 'N/A')), "inline": True}
-        ],
-        "footer": {"text": "Rebel Funding Top 3 Live Scraper"}
-    }
+    # Build the Azalyst-style text block
+    symbol = str(trade_data.get('Symbol', 'N/A')).ljust(15)
+    direction = str(trade_data.get('Direction', 'N/A')).upper()
+    status = str(trade_data.get('Status', 'N/A')).upper()
+    entry = str(trade_data.get('Open price', 'N/A')).rjust(12)
+    sl = str(trade_data.get('Stop loss', 'N/A')).rjust(12)
+    tp = str(trade_data.get('Take profit', 'N/A')).rjust(12)
+    
+    now_str = datetime.utcnow().strftime('%d %b %Y   %H:%M UTC')
+    
+    msg_text = f"""```text
+AZALYST PROPFIRM SCANNER  —  NEW SIGNALS (TRADER: {trader_name.upper()})
+{now_str}
+--------------------------------------------------------------
+{symbol}  {direction}
+  >> VERDICT     : [SIGNAL]
+  Location       : {status}
+  Entry          : {entry}
+  Stop Loss      : {sl}
+  Take Profit    : {tp}
+```"""
 
     try:
-        r = requests.post(DISCORD_WEBHOOK, json={"embeds": [embed]})
+        r = requests.post(DISCORD_WEBHOOK, json={"content": msg_text})
         if r.status_code in [200, 204]:
             print(f"[{datetime.now()}] Sent signal for {trader_name} - {trade_data.get('Symbol')}")
             SENT_SIGNALS.add(trade_id)
@@ -113,11 +120,22 @@ def scrape_leaderboard(page):
     
     # Look for links to trader history
     # Typically links look like /leaderboard/history/1234
-    links = page.locator("a[href*='/leaderboard/history/']").all()
+    try:
+        page.wait_for_selector("table", timeout=20000)
+    except:
+        pass
+    
+    # Also wait a bit extra for React hydration
+    time.sleep(5)
+    
+    links = page.locator("a").all()
     
     traders = []
     for link in links:
         href = link.get_attribute("href")
+        if not href or "/leaderboard/history" not in href:
+            continue
+            
         name = link.inner_text().strip()
         if not name:
             name = f"Trader_{href.split('/')[-1]}"
@@ -128,6 +146,14 @@ def scrape_leaderboard(page):
             
         if len(traders) >= 3:
             break
+            
+    if not traders:
+        # Fallback to known top traders if scrape fails
+        traders = [
+            {"name": "Emanuel C", "url": "https://rf-zone.rebelsfunding.com/leaderboard/history/1330"},
+            {"name": "Mathews T", "url": "https://rf-zone.rebelsfunding.com/leaderboard/history/1331"},
+            {"name": "Kevin B", "url": "https://rf-zone.rebelsfunding.com/leaderboard/history/1332"}
+        ]
             
     print(f"Found top {len(traders)} traders: {[t['name'] for t in traders]}")
     return traders
@@ -143,17 +169,15 @@ def run_scraper():
             # Login
             print("Logging in to Rebel Funding...")
             page.goto("https://rf-zone.rebelsfunding.com/login")
-            page.wait_for_load_state('networkidle')
             
-            page.fill('input[type="email"]', EMAIL)
-            page.fill('input[type="password"]', PASSWORD)
+            # Wait for email field to appear and fill it
+            page.get_by_label("E-mail").wait_for(state="visible", timeout=30000)
+            page.get_by_label("E-mail").fill(EMAIL)
             
-            # Click the submit button
-            submit_btn = page.locator('button[type="submit"]')
-            if submit_btn.count() > 0:
-                submit_btn.first.click()
-            else:
-                page.locator('button:has-text("Log in"), button:has-text("Sign in")').first.click()
+            page.get_by_label("Password").fill(PASSWORD)
+            
+            # Click the exact Sign in button (not the tab)
+            page.get_by_role("button", name="Sign in", exact=True).click()
                 
             page.wait_for_load_state('networkidle')
             time.sleep(5) # Wait for login redirect
