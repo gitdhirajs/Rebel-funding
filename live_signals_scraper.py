@@ -32,11 +32,14 @@ def save_sent_signals(signals):
         json.dump(list(signals), f)
 
 SENT_SIGNALS = load_sent_signals()
+SIGNALS_SENT_THIS_RUN = 0
 
 def send_discord_signal(trader, trade_data):
     trader_name = trader['name']
     trader_winrate = trader['win_rate']
     trader_profit = f"{trader['total_return']:+.2f}"
+    
+    global SIGNALS_SENT_THIS_RUN
     
     # Unique ID based on trader and order number
     trade_id = f"{trader_name}_{trade_data.get('Order number', '')}_{trade_data.get('Status', '')}"
@@ -79,6 +82,7 @@ Total Profit     : {trader_profit}
         r = requests.post(DISCORD_WEBHOOK, json={"content": msg_text})
         if r.status_code in [200, 204]:
             print(f"[{datetime.now()}] Sent signal for {trader_name} - {trade_data.get('Symbol')}")
+            SIGNALS_SENT_THIS_RUN += 1
             SENT_SIGNALS.add(trade_id)
             save_sent_signals(SENT_SIGNALS)
         else:
@@ -235,6 +239,14 @@ def run_scraper():
             browser.close()
             
     print(f"[{datetime.now()}] Scraping cycle complete.")
+    
+    if SIGNALS_SENT_THIS_RUN == 0:
+        now_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime('%d %b %Y   %H:%M IST')
+        heartbeat_msg = f"✅ AZALYST PROPFIRM SCANNER: Checked Leaderboard at {now_str}. No new open signals found."
+        try:
+            requests.post(DISCORD_WEBHOOK, json={"content": heartbeat_msg})
+        except:
+            pass
 
 if __name__ == "__main__":
     run_scraper()
