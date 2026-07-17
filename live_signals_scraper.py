@@ -242,7 +242,7 @@ def run_scraper():
     
     if SIGNALS_SENT_THIS_RUN == 0:
         now_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime('%d %b %Y   %H:%M IST')
-        heartbeat_msg = f"✅ AZALYST PROPFIRM SCANNER: Checked Leaderboard at {now_str}. No new open signals found."
+        heartbeat_msg = f"REBEL FUNDING: Checked Leaderboard at {now_str}. No new open signals found."
         try:
             requests.post(DISCORD_WEBHOOK, json={"content": heartbeat_msg})
         except:
