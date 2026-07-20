@@ -36,8 +36,13 @@ SIGNALS_SENT_THIS_RUN = 0
 
 def send_discord_signal(trader, trade_data):
     trader_name = trader['name']
-    trader_winrate = trader['win_rate']
-    trader_profit = f"{trader['total_return']:+.2f}"
+    trader_winrate = trader.get('win_rate', 'N/A')
+    
+    profit_val = trader.get('total_return', 0)
+    try:
+        trader_profit = f"{float(profit_val):+.2f}"
+    except (ValueError, TypeError):
+        trader_profit = str(profit_val)
     
     global SIGNALS_SENT_THIS_RUN
     
@@ -91,119 +96,6 @@ Total Profit     : {trader_profit}
         print(f"Discord error: {e}")
 
 
-def scrape_trader_trades(page, trader_url, trader_name):
-    """Visit the trader's history page and extract OPEN/PENDING trades and stats."""
-    print(f"Visiting {trader_name}'s profile: {trader_url}")
-    page.goto(trader_url)
-    page.wait_for_load_state('networkidle')
-    time.sleep(3) # Extra wait for dynamic tables
-
-    # Find all table rows
-    rows = page.locator("table tr").all()
-    if not rows:
-        print(f"No tables found for {trader_name}")
-        return
-
-    # Extract headers
-    headers = []
-    for th in rows[0].locator("th, td").all():
-        headers.append(th.inner_text().strip())
-    
-    # If standard headers aren't found, use defaults based on known Excel format
-    if not headers or 'Status' not in headers:
-        headers = ['Symbol', 'Order number', 'Status', 'Direction', 'P/L', 'P/L % %', 'Open price', 'Close price', 'Stop loss', 'Take profit', 'Volume', 'Opened', 'Closed', 'Duration', 'Commission', 'Swap']
-
-    # Parse rows
-    all_trades = []
-    for row in rows[1:]:
-        cells = row.locator("td").all()
-        if len(cells) < len(headers):
-            continue
-            
-        trade_data = {}
-        for i, cell in enumerate(cells):
-            if i < len(headers):
-                trade_data[headers[i]] = cell.inner_text().strip()
-        all_trades.append(trade_data)
-
-    # Calculate Win Rate and Total Profit from the visible trades
-    total_profit = 0.0
-    wins = 0
-    total_closed = 0
-    
-    for td in all_trades:
-        pl_val = td.get('P/L')
-        if pl_val and str(pl_val).strip() and str(pl_val).strip() != '-':
-            try:
-                val_str = str(pl_val).replace(',', '').replace('$', '').replace(' ', '').strip()
-                val = float(val_str)
-                total_profit += val
-                total_closed += 1
-                if val > 0:
-                    wins += 1
-            except ValueError:
-                pass
-                
-    win_rate_str = "N/A"
-    if total_closed > 0:
-        win_rate = (wins / total_closed) * 100
-        win_rate_str = f"{win_rate:.1f}%"
-        
-    trader_info = {
-        'name': trader_name,
-        'win_rate': win_rate_str,
-        'total_return': total_profit
-    }
-
-    # Send signals for OPEN or PENDING trades
-    for td in all_trades:
-        status = td.get('Status', '').upper()
-        if status in ['OPEN', 'PENDING']:
-            send_discord_signal(trader_info, td)
-
-
-def scrape_leaderboard(page):
-    """Navigate to leaderboard and find top 3 traders."""
-    print("Navigating to Leaderboard...")
-    page.goto("https://rf-zone.rebelsfunding.com/leaderboard")
-    page.wait_for_load_state('networkidle')
-    time.sleep(3)
-    
-    try:
-        page.wait_for_selector("table", timeout=20000)
-    except:
-        pass
-    
-    time.sleep(5)
-    
-    links = page.locator("a").all()
-    traders = []
-    for link in links:
-        href = link.get_attribute("href")
-        if not href or "/leaderboard/history" not in href:
-            continue
-            
-        name = link.inner_text().strip()
-        if not name:
-            name = f"Trader_{href.split('/')[-1]}"
-            
-        full_url = href if href.startswith("http") else f"https://rf-zone.rebelsfunding.com{href}"
-        if full_url not in [t['url'] for t in traders]:
-            traders.append({"name": name, "url": full_url})
-            
-        if len(traders) >= 3:
-            break
-            
-    if not traders:
-        traders = [
-            {"name": "Emanuel C", "url": "https://rf-zone.rebelsfunding.com/leaderboard/history/1330"},
-            {"name": "Mathews T", "url": "https://rf-zone.rebelsfunding.com/leaderboard/history/1331"},
-            {"name": "Kevin B", "url": "https://rf-zone.rebelsfunding.com/leaderboard/history/1332"}
-        ]
-            
-    print(f"Found top {len(traders)} traders: {[t['name'] for t in traders]}")
-    return traders
-
 def run_scraper():
     print(f"[{datetime.now()}] Starting live signal scraper...")
     with sync_playwright() as p:
@@ -218,20 +110,109 @@ def run_scraper():
             
             page.get_by_label("E-mail").wait_for(state="visible", timeout=30000)
             page.get_by_label("E-mail").fill(EMAIL)
-            
             page.get_by_label("Password").fill(PASSWORD)
-            
             page.get_by_role("button", name="Sign in", exact=True).click()
                 
             page.wait_for_load_state('networkidle')
             time.sleep(5) # Wait for login redirect
             
             # Scrape top 3
-            top_traders = scrape_leaderboard(page)
+            print("Navigating to Leaderboard...")
+            page.goto("https://rf-zone.rebelsfunding.com/leaderboard")
+            page.wait_for_load_state('networkidle')
+            time.sleep(5)
             
-            # Scrape trades for each
-            for trader in top_traders:
-                scrape_trader_trades(page, trader['url'], trader['name'])
+            rows = page.locator("tbody.p-datatable-tbody > tr").all()
+            if not rows:
+                print("No rows found on the leaderboard!")
+                return
+                
+            for i in range(min(10, len(rows))):
+                try:
+                    # Re-query rows in case DOM changed
+                    rows = page.locator("tbody.p-datatable-tbody > tr").all()
+                    if i >= len(rows): break
+                    
+                    row = rows[i]
+                    cells = row.locator("td").all()
+                    if len(cells) < 4: continue
+                    
+                    name = cells[1].inner_text().strip()
+                    profit_text = cells[5].inner_text().strip()  # Closed Profit
+                    
+                    print(f"Clicking trader row {i}: {name}...")
+                    row.click()
+                    
+                    # Wait for the modal and its tables to appear
+                    try:
+                        page.wait_for_function("() => document.querySelectorAll('table').length > 1", timeout=15000)
+                    except:
+                        print(f"Timeout waiting for modal tables for {name}")
+                        page.keyboard.press("Escape")
+                        time.sleep(2)
+                        continue
+                        
+                    time.sleep(2) # Extra time for data to populate
+                    
+                    tables = page.locator("table").all()
+                    
+                    all_trades = []
+                    
+                    # Find the trades table inside the modal
+                    for t in tables:
+                        headers = [th.inner_text().strip() for th in t.locator("th").all()]
+                        if "Order number" in headers:
+                            trade_rows = t.locator("tbody > tr").all()
+                            for tr in trade_rows:
+                                t_cells = tr.locator("td").all()
+                                if len(t_cells) == len(headers):
+                                    trade_data = {}
+                                    for col_idx, col_name in enumerate(headers):
+                                        clean_col = col_name.replace('\n', '').replace('i', '').strip() if 'Volume' in col_name else col_name
+                                        trade_data[clean_col] = t_cells[col_idx].inner_text().strip()
+                                    all_trades.append(trade_data)
+                                    
+                    # Calculate win rate based on trades
+                    total_closed = 0
+                    wins = 0
+                    for td in all_trades:
+                        pl_val = td.get('P/L')
+                        if pl_val and str(pl_val).strip() and str(pl_val).strip() != '-':
+                            try:
+                                val_str = str(pl_val).replace(',', '').replace('$', '').replace(' ', '').strip()
+                                val = float(val_str)
+                                total_closed += 1
+                                if val > 0:
+                                    wins += 1
+                            except ValueError:
+                                pass
+                                
+                    win_rate_str = "N/A"
+                    if total_closed > 0:
+                        win_rate_str = f"{(wins / total_closed) * 100:.1f}%"
+                        
+                    profit_val = profit_text.replace('$', '').replace(',', '').strip()
+                        
+                    trader_info = {
+                        'name': name,
+                        'win_rate': win_rate_str,
+                        'total_return': profit_val
+                    }
+                    
+                    # Process signals
+                    for td in all_trades:
+                        status = td.get('Status', '').upper()
+                        if status in ['OPEN', 'PENDING']:
+                            send_discord_signal(trader_info, td)
+                            
+                    # Close modal
+                    page.keyboard.press("Escape")
+                    time.sleep(2)
+                    
+                except Exception as e:
+                    print(f"Error extracting data for trader {i}: {e}")
+                    page.keyboard.press("Escape")
+                    time.sleep(2)
                 
         except Exception as e:
             print(f"An error occurred during scraping: {e}")
