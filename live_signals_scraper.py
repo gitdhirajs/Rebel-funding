@@ -34,6 +34,25 @@ def save_sent_signals(signals):
 SENT_SIGNALS = load_sent_signals()
 SIGNALS_SENT_THIS_RUN = 0
 
+# We also track which open/pending trades we've already notified about, per
+# trader, so we can tell when one of them disappears (i.e. gets closed).
+POSITIONS_FILE = "open_positions.json"
+
+def load_open_positions():
+    if os.path.exists(POSITIONS_FILE):
+        try:
+            with open(POSITIONS_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_open_positions(positions):
+    with open(POSITIONS_FILE, 'w') as f:
+        json.dump(positions, f)
+
+OPEN_POSITIONS = load_open_positions()
+
 def extract_visible_trade_tables(page):
     """Read every currently-visible table whose headers include 'Order number'."""
     trades = []
@@ -112,6 +131,45 @@ Total Profit     : {trader_profit}
             save_sent_signals(SENT_SIGNALS)
         else:
             print(f"Failed to send to Discord: {r.status_code}")
+    except Exception as e:
+        print(f"Discord error: {e}")
+
+
+def send_discord_close(trader_name, saved_position, closed_match):
+    """Alert that a previously-notified open/pending trade is no longer open."""
+    global SIGNALS_SENT_THIS_RUN
+
+    symbol = str(saved_position.get('symbol', 'N/A')).ljust(15)
+    direction = str(saved_position.get('direction', 'N/A')).upper()
+    now_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime('%d %b %Y   %H:%M IST')
+
+    if closed_match:
+        result = str(closed_match.get('Status', 'N/A')).upper()
+        close_price = closed_match.get('Close price', 'N/A')
+        pl = closed_match.get('P/L', 'N/A')
+        detail = f"""  Result         : {result}
+  Close Price    : {close_price}
+  P/L            : {pl}"""
+    else:
+        detail = "  Result         : UNKNOWN (could not confirm outcome, check manually)"
+
+    msg_text = f"""<@1363959528194052118>
+```text
+AZALYST PROPFIRM SCANNER  —  POSITION CLOSED (TRADER: {trader_name.upper()})
+{now_str}
+--------------------------------------------------------------
+{symbol}  {direction}
+  >> VERDICT     : [CLOSED]
+{detail}
+```"""
+
+    try:
+        r = requests.post(DISCORD_WEBHOOK, json={"content": msg_text})
+        if r.status_code in [200, 204]:
+            print(f"[{datetime.now()}] Sent close alert for {trader_name} - {saved_position.get('symbol')}")
+            SIGNALS_SENT_THIS_RUN += 1
+        else:
+            print(f"Failed to send close alert to Discord: {r.status_code}")
     except Exception as e:
         print(f"Discord error: {e}")
 
@@ -208,6 +266,7 @@ def run_scraper():
 
                     # Open Trades and Pending Orders are separate tabs, not columns in
                     # the default (Closed Trades) table - each needs its own tab click.
+                    current_position_keys = set()
                     for tab_name, status_label in [("Open Trades", "OPEN"), ("Pending Orders", "PENDING")]:
                         tab = page.get_by_role("tab", name=tab_name)
                         if tab.count() == 0:
@@ -216,7 +275,29 @@ def run_scraper():
                         time.sleep(1.5)
                         for td in extract_visible_trade_tables(page):
                             td['Status'] = status_label
+                            order_num = td.get('Order number', '')
+                            pos_key = f"{name}_{order_num}"
+                            current_position_keys.add(pos_key)
+                            if pos_key not in OPEN_POSITIONS:
+                                OPEN_POSITIONS[pos_key] = {
+                                    'symbol': td.get('Symbol', 'N/A'),
+                                    'direction': td.get('Direction', 'N/A'),
+                                }
                             send_discord_signal(trader_info, td)
+
+                    # Anything we'd previously flagged as open/pending for this trader
+                    # that isn't in this run's tabs anymore has been closed (or cancelled).
+                    trader_prefix = f"{name}_"
+                    known_keys = [k for k in OPEN_POSITIONS if k.startswith(trader_prefix)]
+                    for pos_key in known_keys:
+                        if pos_key in current_position_keys:
+                            continue
+                        order_num = pos_key[len(trader_prefix):]
+                        closed_match = next((td for td in closed_trades if td.get('Order number') == order_num), None)
+                        send_discord_close(name, OPEN_POSITIONS[pos_key], closed_match)
+                        del OPEN_POSITIONS[pos_key]
+
+                    save_open_positions(OPEN_POSITIONS)
 
                     # Close modal
                     page.keyboard.press("Escape")
@@ -244,6 +325,8 @@ def run_scraper():
 
 if __name__ == "__main__":
     run_scraper()
-    
+
     if not os.path.exists(STATE_FILE):
         save_sent_signals(SENT_SIGNALS)
+    if not os.path.exists(POSITIONS_FILE):
+        save_open_positions(OPEN_POSITIONS)
