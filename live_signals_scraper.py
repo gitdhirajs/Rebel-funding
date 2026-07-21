@@ -55,7 +55,8 @@ def extract_visible_trade_tables(page):
 def send_discord_signal(trader, trade_data):
     trader_name = trader['name']
     trader_winrate = trader.get('win_rate', 'N/A')
-    
+    trader_gain = trader.get('gain', 'N/A')
+
     profit_val = trader.get('total_return', 0)
     try:
         trader_profit = f"{float(profit_val):+.2f}"
@@ -98,6 +99,7 @@ AZALYST PROPFIRM SCANNER  —  NEW SIGNALS (TRADER: {trader_name.upper()})
 
 [Trader Stats]
 Win Rate         : {trader_winrate}
+%Gain            : {trader_gain}
 Total Profit     : {trader_profit}
 ```"""
 
@@ -156,6 +158,7 @@ def run_scraper():
                     if len(cells) < 4: continue
                     
                     name = cells[1].inner_text().strip()
+                    gain_text = cells[2].inner_text().strip()  # %Gain
                     profit_text = cells[5].inner_text().strip()  # Closed Profit
                     
                     print(f"Clicking trader row {i}: {name}...")
@@ -199,7 +202,8 @@ def run_scraper():
                     trader_info = {
                         'name': name,
                         'win_rate': win_rate_str,
-                        'total_return': profit_val
+                        'total_return': profit_val,
+                        'gain': gain_text
                     }
 
                     # Open Trades and Pending Orders are separate tabs, not columns in
