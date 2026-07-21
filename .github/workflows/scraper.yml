@@ -26,12 +26,15 @@ jobs:
         playwright install --with-deps chromium
 
     - name: Cache sent signals
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
-        path: sent_signals.json
+        path: |
+          sent_signals.json
+          open_positions.json
         key: signals-cache-${{ github.run_id }}
         restore-keys: |
           signals-cache-
+        save-always: true
 
     - name: Run scraper
       env:
