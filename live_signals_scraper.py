@@ -34,6 +34,24 @@ def save_sent_signals(signals):
 SENT_SIGNALS = load_sent_signals()
 SIGNALS_SENT_THIS_RUN = 0
 
+def extract_visible_trade_tables(page):
+    """Read every currently-visible table whose headers include 'Order number'."""
+    trades = []
+    for t in page.locator("table:visible").all():
+        headers = [th.inner_text().strip() for th in t.locator("th").all()]
+        if "Order number" not in headers:
+            continue
+        for tr in t.locator("tbody > tr").all():
+            t_cells = tr.locator("td").all()
+            if len(t_cells) != len(headers):
+                continue
+            trade_data = {}
+            for col_idx, col_name in enumerate(headers):
+                clean_col = col_name.replace('\n', '').replace('i', '').strip() if 'Volume' in col_name else col_name
+                trade_data[clean_col] = t_cells[col_idx].inner_text().strip()
+            trades.append(trade_data)
+    return trades
+
 def send_discord_signal(trader, trade_data):
     trader_name = trader['name']
     trader_winrate = trader.get('win_rate', 'N/A')
@@ -153,29 +171,14 @@ def run_scraper():
                         continue
                         
                     time.sleep(2) # Extra time for data to populate
-                    
-                    tables = page.locator("table").all()
-                    
-                    all_trades = []
-                    
-                    # Find the trades table inside the modal
-                    for t in tables:
-                        headers = [th.inner_text().strip() for th in t.locator("th").all()]
-                        if "Order number" in headers:
-                            trade_rows = t.locator("tbody > tr").all()
-                            for tr in trade_rows:
-                                t_cells = tr.locator("td").all()
-                                if len(t_cells) == len(headers):
-                                    trade_data = {}
-                                    for col_idx, col_name in enumerate(headers):
-                                        clean_col = col_name.replace('\n', '').replace('i', '').strip() if 'Volume' in col_name else col_name
-                                        trade_data[clean_col] = t_cells[col_idx].inner_text().strip()
-                                    all_trades.append(trade_data)
-                                    
-                    # Calculate win rate based on trades
+
+                    # Default tab is "Closed Trades" - use it for win-rate/profit stats
+                    closed_trades = extract_visible_trade_tables(page)
+
+                    # Calculate win rate based on closed trades
                     total_closed = 0
                     wins = 0
-                    for td in all_trades:
+                    for td in closed_trades:
                         pl_val = td.get('P/L')
                         if pl_val and str(pl_val).strip() and str(pl_val).strip() != '-':
                             try:
@@ -186,25 +189,31 @@ def run_scraper():
                                     wins += 1
                             except ValueError:
                                 pass
-                                
+
                     win_rate_str = "N/A"
                     if total_closed > 0:
                         win_rate_str = f"{(wins / total_closed) * 100:.1f}%"
-                        
+
                     profit_val = profit_text.replace('$', '').replace(',', '').strip()
-                        
+
                     trader_info = {
                         'name': name,
                         'win_rate': win_rate_str,
                         'total_return': profit_val
                     }
-                    
-                    # Process signals
-                    for td in all_trades:
-                        status = td.get('Status', '').upper()
-                        if status in ['OPEN', 'PENDING']:
+
+                    # Open Trades and Pending Orders are separate tabs, not columns in
+                    # the default (Closed Trades) table - each needs its own tab click.
+                    for tab_name, status_label in [("Open Trades", "OPEN"), ("Pending Orders", "PENDING")]:
+                        tab = page.get_by_role("tab", name=tab_name)
+                        if tab.count() == 0:
+                            continue
+                        tab.first.click()
+                        time.sleep(1.5)
+                        for td in extract_visible_trade_tables(page):
+                            td['Status'] = status_label
                             send_discord_signal(trader_info, td)
-                            
+
                     # Close modal
                     page.keyboard.press("Escape")
                     time.sleep(2)
