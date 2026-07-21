@@ -145,7 +145,7 @@ def run_scraper():
                 print("No rows found on the leaderboard!")
                 return
                 
-            for i in range(min(10, len(rows))):
+            for i in range(min(3, len(rows))):
                 try:
                     # Re-query rows in case DOM changed
                     rows = page.locator("tbody.p-datatable-tbody > tr").all()
