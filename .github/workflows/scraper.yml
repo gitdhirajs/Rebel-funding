@@ -31,6 +31,7 @@ jobs:
         path: |
           sent_signals.json
           open_positions.json
+          paper_ledger.json
         key: signals-cache-${{ github.run_id }}
         restore-keys: |
           signals-cache-
