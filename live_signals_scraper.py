@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
+import paper_trading as paper
 
 # --- CONFIGURATION ---
 EMAIL = os.environ.get("REBEL_EMAIL")
@@ -52,6 +53,14 @@ def save_open_positions(positions):
         json.dump(positions, f)
 
 OPEN_POSITIONS = load_open_positions()
+
+PAPER_LEDGER = paper.load_ledger()
+
+def post_discord(msg_text):
+    try:
+        requests.post(DISCORD_WEBHOOK, json={"content": msg_text})
+    except Exception as e:
+        print(f"Discord error: {e}")
 
 def extract_visible_trade_tables(page):
     """Read every currently-visible table whose headers include 'Order number'."""
@@ -176,6 +185,10 @@ AZALYST PROPFIRM SCANNER  —  POSITION CLOSED (TRADER: {trader_name.upper()})
 
 def run_scraper():
     print(f"[{datetime.now()}] Starting live signal scraper...")
+
+    # Update worst/best excursion for every still-open paper position using a
+    # live market price, independent of anything the scraper finds this run.
+    paper.poll_open_positions(PAPER_LEDGER)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
@@ -283,6 +296,14 @@ def run_scraper():
                                     'symbol': td.get('Symbol', 'N/A'),
                                     'direction': td.get('Direction', 'N/A'),
                                 }
+                                if status_label == 'OPEN':
+                                    paper.record_open(
+                                        PAPER_LEDGER, pos_key,
+                                        td.get('Symbol', 'N/A'),
+                                        td.get('Direction', 'N/A'),
+                                        td.get('Open price', 'N/A'),
+                                    )
+                                    paper.save_ledger(PAPER_LEDGER)
                             send_discord_signal(trader_info, td)
 
                     # Anything we'd previously flagged as open/pending for this trader
@@ -295,6 +316,10 @@ def run_scraper():
                         order_num = pos_key[len(trader_prefix):]
                         closed_match = next((td for td in closed_trades if td.get('Order number') == order_num), None)
                         send_discord_close(name, OPEN_POSITIONS[pos_key], closed_match)
+                        if closed_match:
+                            paper_msg = paper.record_close(PAPER_LEDGER, pos_key, closed_match.get('Close price', 'N/A'))
+                            if paper_msg:
+                                post_discord(paper_msg)
                         del OPEN_POSITIONS[pos_key]
 
                     save_open_positions(OPEN_POSITIONS)
@@ -317,11 +342,16 @@ def run_scraper():
     
     if SIGNALS_SENT_THIS_RUN == 0:
         now_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime('%d %b %Y   %H:%M IST')
-        heartbeat_msg = f"REBEL FUNDING: Checked Leaderboard at {now_str}. No new open signals found."
+        heartbeat_msg = (f"REBEL FUNDING: Checked Leaderboard at {now_str}. No new open signals found.\n"
+                          f"{paper.status_line(PAPER_LEDGER)}")
         try:
             requests.post(DISCORD_WEBHOOK, json={"content": heartbeat_msg})
         except:
             pass
+
+    summary_msg = paper.week_summary_if_due(PAPER_LEDGER)
+    if summary_msg:
+        post_discord(summary_msg)
 
 if __name__ == "__main__":
     run_scraper()
@@ -330,3 +360,5 @@ if __name__ == "__main__":
         save_sent_signals(SENT_SIGNALS)
     if not os.path.exists(POSITIONS_FILE):
         save_open_positions(OPEN_POSITIONS)
+    if not os.path.exists(paper.LEDGER_FILE):
+        paper.save_ledger(PAPER_LEDGER)
