@@ -202,7 +202,11 @@ def record_close(ledger, pos_key, close_price):
     ]
 
     for tier in pos["eligible_tiers"]:
-        t = ledger["tiers"][tier]
+        # Positions opened before a TIERS change (e.g. the old 5K/10K/25K setup)
+        # can carry a tier that no longer exists - skip it rather than crash.
+        t = ledger["tiers"].get(tier)
+        if t is None:
+            continue
         t["balance"] += pl
         t["total_pl"] += pl
         day_entry = t["daily"].setdefault(day, {"pl": 0.0, "trades": 0})
