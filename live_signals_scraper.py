@@ -16,6 +16,11 @@ if not all([EMAIL, PASSWORD, DISCORD_WEBHOOK]):
     print("Missing environment variables. Please set REBEL_EMAIL, REBEL_PASSWORD, and DISCORD_WEBHOOK.")
     exit(1)
 
+# Only follow traders who clear this bar - a track record long enough and
+# strong enough to be worth mirroring, instead of the previous fixed top-3.
+MIN_CLOSED_TRADES = 10
+MIN_WIN_RATE_PCT = 80.0
+
 # We will track already sent signals so we don't spam the same open trade
 STATE_FILE = "sent_signals.json"
 
@@ -207,18 +212,20 @@ def run_scraper():
             page.wait_for_load_state('networkidle')
             time.sleep(5) # Wait for login redirect
             
-            # Scrape top 3
+            # Scrape every trader on the leaderboard - filtered below by track record
             print("Navigating to Leaderboard...")
             page.goto("https://rf-zone.rebelsfunding.com/leaderboard")
             page.wait_for_load_state('networkidle')
             time.sleep(5)
-            
+
             rows = page.locator("tbody.p-datatable-tbody > tr").all()
             if not rows:
                 print("No rows found on the leaderboard!")
                 return
-                
-            for i in range(min(3, len(rows))):
+            print(f"Leaderboard has {len(rows)} traders - checking each against "
+                  f">= {MIN_CLOSED_TRADES} closed trades and >= {MIN_WIN_RATE_PCT}% win rate.")
+
+            for i in range(len(rows)):
                 try:
                     # Re-query rows in case DOM changed
                     rows = page.locator("tbody.p-datatable-tbody > tr").all()
@@ -264,9 +271,16 @@ def run_scraper():
                             except ValueError:
                                 pass
 
-                    win_rate_str = "N/A"
-                    if total_closed > 0:
-                        win_rate_str = f"{(wins / total_closed) * 100:.1f}%"
+                    win_rate_pct = (wins / total_closed) * 100 if total_closed > 0 else 0.0
+                    win_rate_str = f"{win_rate_pct:.1f}%" if total_closed > 0 else "N/A"
+
+                    if total_closed < MIN_CLOSED_TRADES or win_rate_pct < MIN_WIN_RATE_PCT:
+                        print(f"  Skipping {name}: {total_closed} closed trades, "
+                              f"{win_rate_str} win rate (need >= {MIN_CLOSED_TRADES} trades, "
+                              f">= {MIN_WIN_RATE_PCT}% win rate)")
+                        page.keyboard.press("Escape")
+                        time.sleep(2)
+                        continue
 
                     profit_val = profit_text.replace('$', '').replace(',', '').strip()
 

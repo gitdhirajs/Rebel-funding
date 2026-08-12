@@ -1,10 +1,9 @@
 """
 Paper-trading simulator for the live signals feed.
 
-Mirrors every real signal/close event onto THREE virtual accounts ($5K/$10K/
-$25K) at the minimum lot size (0.1), using the real firm rules from the
-pricing page: 3% daily loss limit, 12% max (total) loss limit. Each tier
-tracks its own balance/lockout independently.
+Mirrors every real signal/close event onto a single $5K virtual account at
+the minimum lot size (0.1), using the real firm rules from the pricing page:
+3% daily loss limit, 12% max (total) loss limit.
 
 While a signal is open, every scraper run (~every 15 min) polls an
 independent live market price (via yfinance - NOT the source site's own
@@ -26,7 +25,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 LEDGER_FILE = "paper_ledger.json"
 SIM_DAYS = 7
 
-TIERS = {"5K": 5000.0, "10K": 10000.0, "25K": 25000.0}
+TIERS = {"5K": 5000.0}
 DAILY_LOSS_PCT = 0.03   # from the pricing page: Daily Loss 3%
 TOTAL_LOSS_PCT = 0.12   # from the pricing page: Max Loss 12%
 
