@@ -19,7 +19,7 @@ if not all([EMAIL, PASSWORD, DISCORD_WEBHOOK]):
 # Only follow traders who clear this bar - a track record long enough and
 # strong enough to be worth mirroring, instead of the previous fixed top-3.
 MIN_CLOSED_TRADES = 5
-MIN_WIN_RATE_PCT = 75.0
+MIN_WIN_RATE_PCT = 80.0
 
 # We will track already sent signals so we don't spam the same open trade
 STATE_FILE = "sent_signals.json"
@@ -106,7 +106,8 @@ def send_discord_signal(trader, trade_data):
     symbol = str(trade_data.get('Symbol', 'N/A')).ljust(15)
     direction = str(trade_data.get('Direction', 'N/A')).upper()
     status = str(trade_data.get('Status', 'N/A')).upper()
-    
+    order_num = str(trade_data.get('Order number', 'N/A'))
+
     def fmt_price(val):
         if pd.isna(val) or str(val).strip() == '': return 'N/A'
         return str(val)
@@ -125,6 +126,7 @@ AZALYST PROPFIRM SCANNER  —  NEW SIGNALS (TRADER: {trader_name.upper()})
 --------------------------------------------------------------
 {symbol}  {direction}
   >> VERDICT     : [SIGNAL]
+  Order #        : {order_num}
   Location       : {status}
   Entry          : {entry}
   Stop Loss      : {sl}
@@ -149,7 +151,7 @@ Total Profit     : {trader_profit}
         print(f"Discord error: {e}")
 
 
-def send_discord_close(trader_name, saved_position, closed_match):
+def send_discord_close(trader_name, saved_position, closed_match, order_num='N/A'):
     """Alert that a previously-notified open/pending trade is no longer open."""
     global SIGNALS_SENT_THIS_RUN
 
@@ -174,6 +176,7 @@ AZALYST PROPFIRM SCANNER  —  POSITION CLOSED (TRADER: {trader_name.upper()})
 --------------------------------------------------------------
 {symbol}  {direction}
   >> VERDICT     : [CLOSED]
+  Order #        : {order_num}
 {detail}
 ```"""
 
@@ -329,7 +332,7 @@ def run_scraper():
                             continue
                         order_num = pos_key[len(trader_prefix):]
                         closed_match = next((td for td in closed_trades if td.get('Order number') == order_num), None)
-                        send_discord_close(name, OPEN_POSITIONS[pos_key], closed_match)
+                        send_discord_close(name, OPEN_POSITIONS[pos_key], closed_match, order_num)
                         if closed_match:
                             paper_msg = paper.record_close(PAPER_LEDGER, pos_key, closed_match.get('Close price', 'N/A'))
                             if paper_msg:
