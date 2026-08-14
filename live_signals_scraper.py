@@ -16,10 +16,8 @@ if not all([EMAIL, PASSWORD, DISCORD_WEBHOOK]):
     print("Missing environment variables. Please set REBEL_EMAIL, REBEL_PASSWORD, and DISCORD_WEBHOOK.")
     exit(1)
 
-# Only follow traders who clear this bar - a track record long enough and
-# strong enough to be worth mirroring, instead of the previous fixed top-3.
-MIN_CLOSED_TRADES = 5
-MIN_WIN_RATE_PCT = 80.0
+# Only follow the top N traders on the leaderboard, ranked by %Gain (gainers).
+TOP_N_TRADERS = 5
 
 # We will track already sent signals so we don't spam the same open trade
 STATE_FILE = "sent_signals.json"
@@ -225,23 +223,45 @@ def run_scraper():
             if not rows:
                 print("No rows found on the leaderboard!")
                 return
-            print(f"Leaderboard has {len(rows)} traders - checking each against "
-                  f">= {MIN_CLOSED_TRADES} closed trades and >= {MIN_WIN_RATE_PCT}% win rate.")
+
+            # Rank every trader by %Gain and only follow the top N (gainers).
+            def parse_gain(text):
+                try:
+                    return float(text.replace('%', '').replace(',', '').strip())
+                except (ValueError, AttributeError):
+                    return float('-inf')
+
+            candidates = []
+            for i in range(len(rows)):
+                cells = rows[i].locator("td").all()
+                if len(cells) < 4:
+                    continue
+                name = cells[1].inner_text().strip()
+                gain_text = cells[2].inner_text().strip()  # %Gain
+                candidates.append({'index': i, 'name': name, 'gain_text': gain_text,
+                                    'gain_val': parse_gain(gain_text)})
+
+            top_traders = sorted(candidates, key=lambda c: c['gain_val'], reverse=True)[:TOP_N_TRADERS]
+            top_indices = {t['index'] for t in top_traders}
+            print(f"Leaderboard has {len(rows)} traders - following top {len(top_traders)} by %Gain: "
+                  + ", ".join(f"{t['name']} ({t['gain_text']})" for t in top_traders))
 
             for i in range(len(rows)):
+                if i not in top_indices:
+                    continue
                 try:
                     # Re-query rows in case DOM changed
                     rows = page.locator("tbody.p-datatable-tbody > tr").all()
                     if i >= len(rows): break
-                    
+
                     row = rows[i]
                     cells = row.locator("td").all()
                     if len(cells) < 4: continue
-                    
+
                     name = cells[1].inner_text().strip()
                     gain_text = cells[2].inner_text().strip()  # %Gain
                     profit_text = cells[5].inner_text().strip()  # Closed Profit
-                    
+
                     print(f"Clicking trader row {i}: {name}...")
                     row.click()
                     
@@ -276,14 +296,6 @@ def run_scraper():
 
                     win_rate_pct = (wins / total_closed) * 100 if total_closed > 0 else 0.0
                     win_rate_str = f"{win_rate_pct:.1f}%" if total_closed > 0 else "N/A"
-
-                    if total_closed < MIN_CLOSED_TRADES or win_rate_pct < MIN_WIN_RATE_PCT:
-                        print(f"  Skipping {name}: {total_closed} closed trades, "
-                              f"{win_rate_str} win rate (need >= {MIN_CLOSED_TRADES} trades, "
-                              f">= {MIN_WIN_RATE_PCT}% win rate)")
-                        page.keyboard.press("Escape")
-                        time.sleep(2)
-                        continue
 
                     profit_val = profit_text.replace('$', '').replace(',', '').strip()
 
