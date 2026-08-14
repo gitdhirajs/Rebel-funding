@@ -19,7 +19,7 @@ if not all([EMAIL, PASSWORD, DISCORD_WEBHOOK]):
 # Only follow traders who clear this bar - a track record long enough and
 # strong enough to be worth mirroring, instead of the previous fixed top-3.
 MIN_CLOSED_TRADES = 5
-MIN_WIN_RATE_PCT = 55.0
+MIN_WIN_RATE_PCT = 75.0
 
 # We will track already sent signals so we don't spam the same open trade
 STATE_FILE = "sent_signals.json"
