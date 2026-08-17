@@ -220,6 +220,12 @@ def record_close(ledger, pos_key, close_price):
     pos = ledger["open_positions"].pop(pos_key, None)
     if not pos or pos.get("entry") is None:
         return None
+    if not is_symbol_allowed(pos["symbol"]):
+        # Stale position recorded before the symbol allowlist existed (or from
+        # an old TIERS config) - drop it quietly instead of posting a paper
+        # close message for a symbol this account doesn't trade.
+        save_ledger(ledger)
+        return None
     try:
         close = float(str(close_price).replace(',', '').strip())
     except (ValueError, TypeError):
