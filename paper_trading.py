@@ -245,8 +245,13 @@ def record_close(ledger, pos_key, close_price):
     ]
 
     for tier in pos["eligible_tiers"]:
-        # Positions opened before a TIERS change (e.g. the old 5K/10K/25K setup)
-        # can carry a tier that no longer exists - skip it rather than crash.
+        # Positions opened before a TIERS change (e.g. the old 5K/3%/12% setup)
+        # can carry a tier name that no longer exists in the *current* TIERS
+        # config - daily_limit/total_limit/phase_target all index TIERS[tier]
+        # directly, so check against TIERS (not just ledger["tiers"], which
+        # never prunes old entries) before touching any of them.
+        if tier not in TIERS:
+            continue
         t = ledger["tiers"].get(tier)
         if t is None:
             continue
