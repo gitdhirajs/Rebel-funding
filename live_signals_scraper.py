@@ -16,13 +16,8 @@ if not all([EMAIL, PASSWORD, DISCORD_WEBHOOK]):
     print("Missing environment variables. Please set REBEL_EMAIL, REBEL_PASSWORD, and DISCORD_WEBHOOK.")
     exit(1)
 
-# Always follow the top N traders on the leaderboard, ranked by %Gain (gainers).
-TOP_N_TRADERS = 3
-
-# Beyond the top N, also follow anyone whose closed-trade win rate clears this
-# bar - a high-conviction trader who isn't currently a top gainer.
-MIN_WIN_RATE_PCT = 90.0
-MIN_CLOSED_TRADES = 5
+# Only follow the top N traders on the leaderboard, ranked by %Gain (gainers).
+TOP_N_TRADERS = 15
 
 # We will track already sent signals so we don't spam the same open trade
 STATE_FILE = "sent_signals.json"
@@ -90,6 +85,7 @@ def extract_visible_trade_tables(page):
 
 def send_discord_signal(trader, trade_data):
     trader_name = trader['name']
+    trader_rank = trader.get('rank', 'N/A')
     trader_winrate = trader.get('win_rate', 'N/A')
     trader_gain = trader.get('gain', 'N/A')
 
@@ -136,6 +132,7 @@ AZALYST PROPFIRM SCANNER  —  NEW SIGNALS (TRADER: {trader_name.upper()})
   Take Profit    : {tp}
 
 [Trader Stats]
+Leaderboard Rank : #{trader_rank}
 Win Rate         : {trader_winrate}
 %Gain            : {trader_gain}
 Total Profit     : {trader_profit}
@@ -248,13 +245,14 @@ def run_scraper():
 
             top_traders = sorted(candidates, key=lambda c: c['gain_val'], reverse=True)[:TOP_N_TRADERS]
             top_indices = {t['index'] for t in top_traders}
+            rank_by_index = {t['index']: rank for rank, t in enumerate(top_traders, start=1)}
             print(f"Leaderboard has {len(rows)} traders - following top {len(top_traders)} by %Gain: "
-                  + ", ".join(f"{t['name']} ({t['gain_text']})" for t in top_traders)
-                  + f". Everyone else is checked for >= {MIN_WIN_RATE_PCT}% win rate "
-                  + f"(>= {MIN_CLOSED_TRADES} closed trades).")
+                  + ", ".join(f"#{rank} {t['name']} ({t['gain_text']})"
+                              for rank, t in enumerate(top_traders, start=1)))
 
             for i in range(len(rows)):
-                is_top = i in top_indices
+                if i not in top_indices:
+                    continue
                 try:
                     # Re-query rows in case DOM changed
                     rows = page.locator("tbody.p-datatable-tbody > tr").all()
@@ -303,19 +301,11 @@ def run_scraper():
                     win_rate_pct = (wins / total_closed) * 100 if total_closed > 0 else 0.0
                     win_rate_str = f"{win_rate_pct:.1f}%" if total_closed > 0 else "N/A"
 
-                    # Rank 4+ traders only get followed if their win rate clears the bar.
-                    if not is_top and (total_closed < MIN_CLOSED_TRADES or win_rate_pct < MIN_WIN_RATE_PCT):
-                        print(f"  Skipping {name} (rank not in top {TOP_N_TRADERS}): "
-                              f"{total_closed} closed trades, {win_rate_str} win rate "
-                              f"(need >= {MIN_CLOSED_TRADES} trades, >= {MIN_WIN_RATE_PCT}% win rate)")
-                        page.keyboard.press("Escape")
-                        time.sleep(2)
-                        continue
-
                     profit_val = profit_text.replace('$', '').replace(',', '').strip()
 
                     trader_info = {
                         'name': name,
+                        'rank': rank_by_index.get(i, 'N/A'),
                         'win_rate': win_rate_str,
                         'total_return': profit_val,
                         'gain': gain_text
