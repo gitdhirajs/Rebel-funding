@@ -16,8 +16,10 @@ if not all([EMAIL, PASSWORD, DISCORD_WEBHOOK]):
     print("Missing environment variables. Please set REBEL_EMAIL, REBEL_PASSWORD, and DISCORD_WEBHOOK.")
     exit(1)
 
-# Only follow the top N traders on the leaderboard, ranked by %Gain (gainers).
-TOP_N_TRADERS = 15
+# Follow every trader on the leaderboard. Discord noise is controlled instead
+# by paper.is_symbol_allowed() (Safest/Moderate tiers only - see paper_trading.py).
+# Set to an int to cap it back to the top N by %Gain if runtime becomes an issue.
+TOP_N_TRADERS = None
 
 # We will track already sent signals so we don't spam the same open trade
 STATE_FILE = "sent_signals.json"
