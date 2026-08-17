@@ -16,10 +16,14 @@ if not all([EMAIL, PASSWORD, DISCORD_WEBHOOK]):
     print("Missing environment variables. Please set REBEL_EMAIL, REBEL_PASSWORD, and DISCORD_WEBHOOK.")
     exit(1)
 
-# Follow every trader on the leaderboard. Discord noise is controlled instead
-# by paper.is_symbol_allowed() (Safest/Moderate tiers only - see paper_trading.py).
-# Set to an int to cap it back to the top N by %Gain if runtime becomes an issue.
-TOP_N_TRADERS = None
+# Check the top N traders by %Gain first. Only if NONE of them currently have
+# an open/pending trade in an allowed symbol (Safest/Moderate tier - see
+# paper.ALLOWED_SYMBOLS) do we fall back to the next M traders. This keeps
+# runtime bounded (at most PRIMARY+FALLBACK traders, not the whole leaderboard)
+# while still finding a signal when the very top of the leaderboard has
+# nothing open in a symbol we actually trade.
+PRIMARY_POOL_SIZE = 15
+FALLBACK_POOL_SIZE = 10
 
 # We will track already sent signals so we don't spam the same open trade
 STATE_FILE = "sent_signals.json"
@@ -228,7 +232,7 @@ def run_scraper():
                 print("No rows found on the leaderboard!")
                 return
 
-            # Rank every trader by %Gain and only follow the top N (gainers).
+            # Rank every trader by %Gain.
             def parse_gain(text):
                 try:
                     return float(text.replace('%', '').replace(',', '').strip())
@@ -245,133 +249,158 @@ def run_scraper():
                 candidates.append({'index': i, 'name': name, 'gain_text': gain_text,
                                     'gain_val': parse_gain(gain_text)})
 
-            top_traders = sorted(candidates, key=lambda c: c['gain_val'], reverse=True)[:TOP_N_TRADERS]
-            top_indices = {t['index'] for t in top_traders}
-            rank_by_index = {t['index']: rank for rank, t in enumerate(top_traders, start=1)}
-            print(f"Leaderboard has {len(rows)} traders - following top {len(top_traders)} by %Gain: "
+            ranked = sorted(candidates, key=lambda c: c['gain_val'], reverse=True)
+            primary_traders = ranked[:PRIMARY_POOL_SIZE]
+            fallback_traders = ranked[PRIMARY_POOL_SIZE:PRIMARY_POOL_SIZE + FALLBACK_POOL_SIZE]
+            primary_indices = {t['index'] for t in primary_traders}
+            fallback_indices = {t['index'] for t in fallback_traders}
+            rank_by_index = {t['index']: rank for rank, t in enumerate(ranked, start=1)}
+            print(f"Leaderboard has {len(rows)} traders - checking top {len(primary_traders)} by %Gain first: "
                   + ", ".join(f"#{rank} {t['name']} ({t['gain_text']})"
-                              for rank, t in enumerate(top_traders, start=1)))
+                              for rank, t in enumerate(primary_traders, start=1)))
 
-            for i in range(len(rows)):
-                if i not in top_indices:
-                    continue
-                try:
-                    # Re-query rows in case DOM changed
-                    rows = page.locator("tbody.p-datatable-tbody > tr").all()
-                    if i >= len(rows): break
-
-                    row = rows[i]
-                    cells = row.locator("td").all()
-                    if len(cells) < 4: continue
-
-                    name = cells[1].inner_text().strip()
-                    gain_text = cells[2].inner_text().strip()  # %Gain
-                    profit_text = cells[5].inner_text().strip()  # Closed Profit
-
-                    print(f"Clicking trader row {i}: {name}...")
-                    row.click()
-                    
-                    # Wait for the modal and its tables to appear
+            def scan_pool(indices, pool_name):
+                """Scrapes the given trader row indices. Returns True if any
+                currently open/pending trade among them is in an allowed
+                symbol (Safest/Moderate tier)."""
+                nonlocal rows
+                found_allowed_signal = False
+                for i in range(len(rows)):
+                    if i not in indices:
+                        continue
                     try:
-                        page.wait_for_function("() => document.querySelectorAll('table').length > 1", timeout=15000)
-                    except:
-                        print(f"Timeout waiting for modal tables for {name}")
+                        # Re-query rows in case DOM changed
+                        rows = page.locator("tbody.p-datatable-tbody > tr").all()
+                        if i >= len(rows): break
+
+                        row = rows[i]
+                        cells = row.locator("td").all()
+                        if len(cells) < 4: continue
+
+                        name = cells[1].inner_text().strip()
+                        gain_text = cells[2].inner_text().strip()  # %Gain
+                        profit_text = cells[5].inner_text().strip()  # Closed Profit
+
+                        print(f"Clicking trader row {i} ({pool_name}): {name}...")
+                        row.click()
+
+                        # Wait for the modal and its tables to appear
+                        try:
+                            page.wait_for_function("() => document.querySelectorAll('table').length > 1", timeout=15000)
+                        except:
+                            print(f"Timeout waiting for modal tables for {name}")
+                            page.keyboard.press("Escape")
+                            time.sleep(2)
+                            continue
+
+                        time.sleep(2) # Extra time for data to populate
+
+                        # Default tab is "Closed Trades" - use it for win-rate/profit stats
+                        closed_trades = extract_visible_trade_tables(page)
+
+                        # Calculate win rate based on closed trades
+                        total_closed = 0
+                        wins = 0
+                        for td in closed_trades:
+                            pl_val = td.get('P/L')
+                            if pl_val and str(pl_val).strip() and str(pl_val).strip() != '-':
+                                try:
+                                    val_str = str(pl_val).replace(',', '').replace('$', '').replace(' ', '').strip()
+                                    val = float(val_str)
+                                    total_closed += 1
+                                    if val > 0:
+                                        wins += 1
+                                except ValueError:
+                                    pass
+
+                        win_rate_pct = (wins / total_closed) * 100 if total_closed > 0 else 0.0
+                        win_rate_str = f"{win_rate_pct:.1f}%" if total_closed > 0 else "N/A"
+
+                        profit_val = profit_text.replace('$', '').replace(',', '').strip()
+
+                        trader_info = {
+                            'name': name,
+                            'rank': rank_by_index.get(i, 'N/A'),
+                            'win_rate': win_rate_str,
+                            'total_return': profit_val,
+                            'gain': gain_text
+                        }
+
+                        # Open Trades and Pending Orders are separate tabs, not columns in
+                        # the default (Closed Trades) table - each needs its own tab click.
+                        current_position_keys = set()
+                        for tab_name, status_label in [("Open Trades", "OPEN"), ("Pending Orders", "PENDING")]:
+                            tab = page.get_by_role("tab", name=tab_name)
+                            if tab.count() == 0:
+                                continue
+                            tab.first.click()
+                            time.sleep(1.5)
+                            for td in extract_visible_trade_tables(page):
+                                td['Status'] = status_label
+                                order_num = td.get('Order number', '')
+                                pos_key = f"{name}_{order_num}"
+                                current_position_keys.add(pos_key)
+                                # A pool "has a signal" if it currently holds any open/pending
+                                # trade in an allowed symbol - whether brand new or already
+                                # known - since that's what decides whether we need to fall
+                                # back to the next pool at all.
+                                if paper.is_symbol_allowed(td.get('Symbol', 'N/A')):
+                                    found_allowed_signal = True
+                                if pos_key not in OPEN_POSITIONS:
+                                    OPEN_POSITIONS[pos_key] = {
+                                        'symbol': td.get('Symbol', 'N/A'),
+                                        'direction': td.get('Direction', 'N/A'),
+                                    }
+                                    if status_label == 'OPEN':
+                                        paper.record_open(
+                                            PAPER_LEDGER, pos_key,
+                                            td.get('Symbol', 'N/A'),
+                                            td.get('Direction', 'N/A'),
+                                            td.get('Open price', 'N/A'),
+                                        )
+                                        paper.save_ledger(PAPER_LEDGER)
+                                # Only alert on symbols this account actually trades
+                                # (metals/crypto filtered out - see paper.ALLOWED_SYMBOLS).
+                                if paper.is_symbol_allowed(td.get('Symbol', 'N/A')):
+                                    send_discord_signal(trader_info, td)
+
+                        # Anything we'd previously flagged as open/pending for this trader
+                        # that isn't in this run's tabs anymore has been closed (or cancelled).
+                        trader_prefix = f"{name}_"
+                        known_keys = [k for k in OPEN_POSITIONS if k.startswith(trader_prefix)]
+                        for pos_key in known_keys:
+                            if pos_key in current_position_keys:
+                                continue
+                            order_num = pos_key[len(trader_prefix):]
+                            closed_match = next((td for td in closed_trades if td.get('Order number') == order_num), None)
+                            if paper.is_symbol_allowed(OPEN_POSITIONS[pos_key].get('symbol', 'N/A')):
+                                send_discord_close(name, OPEN_POSITIONS[pos_key], closed_match, order_num)
+                            if closed_match:
+                                paper_msg = paper.record_close(PAPER_LEDGER, pos_key, closed_match.get('Close price', 'N/A'))
+                                if paper_msg:
+                                    post_discord(paper_msg)
+                            del OPEN_POSITIONS[pos_key]
+
+                        save_open_positions(OPEN_POSITIONS)
+
+                        # Close modal
                         page.keyboard.press("Escape")
                         time.sleep(2)
-                        continue
-                        
-                    time.sleep(2) # Extra time for data to populate
 
-                    # Default tab is "Closed Trades" - use it for win-rate/profit stats
-                    closed_trades = extract_visible_trade_tables(page)
+                    except Exception as e:
+                        print(f"Error extracting data for trader {i}: {e}")
+                        page.keyboard.press("Escape")
+                        time.sleep(2)
 
-                    # Calculate win rate based on closed trades
-                    total_closed = 0
-                    wins = 0
-                    for td in closed_trades:
-                        pl_val = td.get('P/L')
-                        if pl_val and str(pl_val).strip() and str(pl_val).strip() != '-':
-                            try:
-                                val_str = str(pl_val).replace(',', '').replace('$', '').replace(' ', '').strip()
-                                val = float(val_str)
-                                total_closed += 1
-                                if val > 0:
-                                    wins += 1
-                            except ValueError:
-                                pass
+                return found_allowed_signal
 
-                    win_rate_pct = (wins / total_closed) * 100 if total_closed > 0 else 0.0
-                    win_rate_str = f"{win_rate_pct:.1f}%" if total_closed > 0 else "N/A"
-
-                    profit_val = profit_text.replace('$', '').replace(',', '').strip()
-
-                    trader_info = {
-                        'name': name,
-                        'rank': rank_by_index.get(i, 'N/A'),
-                        'win_rate': win_rate_str,
-                        'total_return': profit_val,
-                        'gain': gain_text
-                    }
-
-                    # Open Trades and Pending Orders are separate tabs, not columns in
-                    # the default (Closed Trades) table - each needs its own tab click.
-                    current_position_keys = set()
-                    for tab_name, status_label in [("Open Trades", "OPEN"), ("Pending Orders", "PENDING")]:
-                        tab = page.get_by_role("tab", name=tab_name)
-                        if tab.count() == 0:
-                            continue
-                        tab.first.click()
-                        time.sleep(1.5)
-                        for td in extract_visible_trade_tables(page):
-                            td['Status'] = status_label
-                            order_num = td.get('Order number', '')
-                            pos_key = f"{name}_{order_num}"
-                            current_position_keys.add(pos_key)
-                            if pos_key not in OPEN_POSITIONS:
-                                OPEN_POSITIONS[pos_key] = {
-                                    'symbol': td.get('Symbol', 'N/A'),
-                                    'direction': td.get('Direction', 'N/A'),
-                                }
-                                if status_label == 'OPEN':
-                                    paper.record_open(
-                                        PAPER_LEDGER, pos_key,
-                                        td.get('Symbol', 'N/A'),
-                                        td.get('Direction', 'N/A'),
-                                        td.get('Open price', 'N/A'),
-                                    )
-                                    paper.save_ledger(PAPER_LEDGER)
-                            # Only alert on symbols this account actually trades
-                            # (metals/crypto filtered out - see paper.ALLOWED_SYMBOLS).
-                            if paper.is_symbol_allowed(td.get('Symbol', 'N/A')):
-                                send_discord_signal(trader_info, td)
-
-                    # Anything we'd previously flagged as open/pending for this trader
-                    # that isn't in this run's tabs anymore has been closed (or cancelled).
-                    trader_prefix = f"{name}_"
-                    known_keys = [k for k in OPEN_POSITIONS if k.startswith(trader_prefix)]
-                    for pos_key in known_keys:
-                        if pos_key in current_position_keys:
-                            continue
-                        order_num = pos_key[len(trader_prefix):]
-                        closed_match = next((td for td in closed_trades if td.get('Order number') == order_num), None)
-                        if paper.is_symbol_allowed(OPEN_POSITIONS[pos_key].get('symbol', 'N/A')):
-                            send_discord_close(name, OPEN_POSITIONS[pos_key], closed_match, order_num)
-                        if closed_match:
-                            paper_msg = paper.record_close(PAPER_LEDGER, pos_key, closed_match.get('Close price', 'N/A'))
-                            if paper_msg:
-                                post_discord(paper_msg)
-                        del OPEN_POSITIONS[pos_key]
-
-                    save_open_positions(OPEN_POSITIONS)
-
-                    # Close modal
-                    page.keyboard.press("Escape")
-                    time.sleep(2)
-                    
-                except Exception as e:
-                    print(f"Error extracting data for trader {i}: {e}")
-                    page.keyboard.press("Escape")
-                    time.sleep(2)
+            found_in_primary = scan_pool(primary_indices, f"top {len(primary_traders)}")
+            if not found_in_primary and fallback_traders:
+                print(f"No allowed-symbol open/pending trades among the top {len(primary_traders)} - "
+                      f"checking next {len(fallback_traders)} (#{len(primary_traders) + 1}-#{len(primary_traders) + len(fallback_traders)})...")
+                scan_pool(fallback_indices, f"next {len(fallback_traders)}")
+            elif found_in_primary:
+                print(f"Found allowed-symbol open/pending trade(s) in the top {len(primary_traders)} - skipping fallback pool.")
                 
         except Exception as e:
             print(f"An error occurred during scraping: {e}")
