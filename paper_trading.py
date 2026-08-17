@@ -1,9 +1,14 @@
 """
 Paper-trading simulator for the live signals feed.
 
-Mirrors every real signal/close event onto a single $5K virtual account at
-the minimum lot size (0.1), using the real firm rules from the pricing page:
-3% daily loss limit, 12% max (total) loss limit.
+Mirrors every real signal/close event onto a single $2.5K virtual account at
+the minimum lot size (0.1), using Goat Funded Trader's real "2-Step GOAT"
+evaluation rules (help.goatfundedtrader.com/en/articles/13575348-2-step-goat-model):
+  - Daily drawdown: 4% (static, off starting balance)
+  - Max drawdown: 10% (static floor at 90% of starting balance)
+  - Phase 1 profit target: 8%; Phase 2 profit target: 6%
+  - Min. 3 valid trading days per phase (a valid day = that day's P/L >= 0.5%
+    of starting balance)
 
 While a signal is open, every scraper run (~every 15 min) polls an
 independent live market price (via yfinance - NOT the source site's own
@@ -25,15 +30,24 @@ IST = timezone(timedelta(hours=5, minutes=30))
 LEDGER_FILE = "paper_ledger.json"
 SIM_DAYS = 7
 
-TIERS = {"5K": 5000.0}
-DAILY_LOSS_PCT = 0.03   # from the pricing page: Daily Loss 3%
-TOTAL_LOSS_PCT = 0.12   # from the pricing page: Max Loss 12%
+TIERS = {"2.5K": 2500.0}
+DAILY_LOSS_PCT = 0.04     # GOAT 2-Step: 4% daily drawdown
+TOTAL_LOSS_PCT = 0.10     # GOAT 2-Step: 10% static max drawdown
+PHASE_TARGET_PCT = 0.08   # GOAT 2-Step Phase 1 profit target (Phase 2 is 6%)
+VALID_DAY_PCT = 0.005     # a trading day only counts if that day's P/L >= 0.5% of start
+MIN_VALID_DAYS = 3        # required valid trading days to clear a phase
 
 def daily_limit(tier):
     return TIERS[tier] * DAILY_LOSS_PCT
 
 def total_limit(tier):
     return TIERS[tier] * TOTAL_LOSS_PCT
+
+def phase_target(tier):
+    return TIERS[tier] * PHASE_TARGET_PCT
+
+def valid_day_threshold(tier):
+    return TIERS[tier] * VALID_DAY_PCT
 
 # pip_size = smallest price increment to measure distance in.
 # pip_value = $ P/L per pip_size move, AT 0.1 LOT (the minimum size) - same
@@ -68,7 +82,8 @@ def today_str():
 
 
 def _new_tier_state():
-    return {"balance": 0.0, "total_pl": 0.0, "daily": {}, "failed": False, "breaches": []}
+    return {"balance": 0.0, "total_pl": 0.0, "daily": {}, "failed": False, "breaches": [],
+            "valid_days": [], "passed": False}
 
 
 def load_ledger():
@@ -97,9 +112,34 @@ def save_ledger(ledger):
         json.dump(ledger, f, indent=2)
 
 
+# Symbols allowed for this account, ranked "safest" -> "moderate" by real
+# per-0.01-lot risk observed in trader_trades/ (see symbol_risk_profile_001lot.csv).
+# Crypto (high tier: BTCUSDT/ETHUSDT/XMRUSDT/BNBUSDT/...) and all four metals
+# (XAU/XAG/XPT/XPD - avoid tier, worst single-trade loss $74-$642 at 0.01 lot)
+# are intentionally excluded per account risk tolerance.
+ALLOWED_SYMBOLS = {
+    # safest - indices & single stocks, worst-case 0.01-lot loss ~$1-12
+    "US500", "USTEC", "USTEC.V", "DE30.V", "UK100.V", "F40.V", "STOXX50.V",
+    "AAPL.OQ", "AMZN.OQ", "TSLA.OQ", "1NGAS",
+    # moderate - major/minor FX, worst-case 0.01-lot loss ~$15-37
+    "EUR/USD", "EURUSD", "GBP/USD", "GBPUSD", "AUD/USD", "AUDUSD",
+    "USD/JPY", "USDJPY", "NZD/USD", "NZDUSD", "USD/CAD", "USDCAD",
+    "USD/CHF", "USDCHF", "GBP/JPY", "GBPJPY", "EUR/JPY", "EURJPY",
+    "AUD/JPY", "AUDJPY", "CAD/JPY", "CADJPY", "NZD/JPY", "NZDJPY",
+    "EUR/GBP", "EURGBP", "EUR/CHF", "EURCHF", "AUD/CAD", "AUDCAD",
+    "NZD/CAD", "NZDCAD", "AUD/CHF", "AUDCHF", "NZD/CHF", "NZDCHF",
+    "AUD/NZD", "AUDNZD", "EUR/NZD", "EURNZD", "EUR/CAD", "EURCAD",
+    "EUR/AUD", "EURAUD", "GBP/CHF", "GBPCHF", "GBP/AUD", "GBPAUD",
+    "GBP/CAD", "GBPCAD", "GBP/NZD", "GBPNZD", "CAD/CHF", "CADCHF",
+    "CHF/JPY", "CHFJPY", "DJ30", "1USO",
+}
+
+def is_symbol_allowed(symbol):
+    return normalize_symbol(symbol) in {normalize_symbol(s) for s in ALLOWED_SYMBOLS}
+
 def tier_can_open(ledger, tier):
     t = ledger["tiers"][tier]
-    if t["failed"]:
+    if t["failed"] or t["passed"]:
         return False
     day_pl = t["daily"].get(today_str(), {}).get("pl", 0.0)
     return day_pl > -daily_limit(tier)
@@ -107,7 +147,10 @@ def tier_can_open(ledger, tier):
 
 def record_open(ledger, pos_key, symbol, direction, entry_price):
     """Opens a shared virtual position for whichever tiers are currently
-    still allowed to trade. Returns False if every tier is locked out."""
+    still allowed to trade. Returns False if every tier is locked out, or if
+    the symbol isn't on the account's allowed list (metals/crypto excluded)."""
+    if not is_symbol_allowed(symbol):
+        return False
     eligible = [t for t in TIERS if tier_can_open(ledger, t)]
     if not eligible:
         return False
@@ -214,13 +257,21 @@ def record_close(ledger, pos_key, close_price):
         day_entry["trades"] += 1
         day_pl = day_entry["pl"]
         tier_line = (f"  [{tier}] Day {day_pl:+.2f}/-{daily_limit(tier):.0f}  "
-                     f"Total {t['total_pl']:+.2f}/-{total_limit(tier):.0f}  Bal {t['balance']:.2f}")
+                     f"Total {t['total_pl']:+.2f}/+{phase_target(tier):.0f} (fail<-{total_limit(tier):.0f})  "
+                     f"Bal {t['balance']:.2f}  ValidDays {len(t['valid_days'])}/{MIN_VALID_DAYS}")
         if day not in t["breaches"] and day_pl <= -daily_limit(tier):
             t["breaches"].append(day)
             tier_line += "  ** DAILY LIMIT HIT **"
         if not t["failed"] and t["total_pl"] <= -total_limit(tier):
             t["failed"] = True
             tier_line += "  ** TOTAL LIMIT HIT - FAILED (paper) **"
+        if day_pl >= valid_day_threshold(tier) and day not in t["valid_days"]:
+            t["valid_days"].append(day)
+            tier_line += f"  ** VALID TRADING DAY ({len(t['valid_days'])}/{MIN_VALID_DAYS}) **"
+        if not t["failed"] and not t["passed"] and t["total_pl"] >= phase_target(tier) \
+                and len(t["valid_days"]) >= MIN_VALID_DAYS:
+            t["passed"] = True
+            tier_line += "  ** PHASE TARGET MET - PASSED (paper) **"
         lines.append(tier_line)
 
     save_ledger(ledger)
@@ -233,9 +284,10 @@ def status_line(ledger):
     for tier in TIERS:
         t = ledger["tiers"][tier]
         day_pl = t["daily"].get(day, {}).get("pl", 0.0)
-        flag = " FAILED" if t["failed"] else ""
+        flag = " FAILED" if t["failed"] else (" PASSED" if t["passed"] else "")
         parts.append(f"  [{tier}] Bal {t['balance']:.2f}  Today {day_pl:+.2f}/-{daily_limit(tier):.0f}  "
-                      f"Total {t['total_pl']:+.2f}/-{total_limit(tier):.0f}{flag}")
+                      f"Total {t['total_pl']:+.2f}/+{phase_target(tier):.0f} (fail<-{total_limit(tier):.0f})  "
+                      f"ValidDays {len(t['valid_days'])}/{MIN_VALID_DAYS}{flag}")
     return "\n".join(parts)
 
 
