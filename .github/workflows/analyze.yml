@@ -5,6 +5,7 @@ on:
     paths:
       - 'trader_trades/**'
       - 'analyze.py'
+      - 'filtered_analysis.py'
   workflow_dispatch:
 
 jobs:
@@ -27,6 +28,9 @@ jobs:
       - name: Run analysis
         run: python analyze.py
 
+      - name: Run filtered analysis (metals excluded, per-symbol 0.01-lot risk)
+        run: python filtered_analysis.py
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -35,3 +39,5 @@ jobs:
             summary.csv
             comparison.txt
             style_distribution.png
+            summary_no_metals.csv
+            symbol_risk_profile_001lot.csv
