@@ -338,7 +338,10 @@ def run_scraper():
                                         td.get('Open price', 'N/A'),
                                     )
                                     paper.save_ledger(PAPER_LEDGER)
-                            send_discord_signal(trader_info, td)
+                            # Only alert on symbols this account actually trades
+                            # (metals/crypto filtered out - see paper.ALLOWED_SYMBOLS).
+                            if paper.is_symbol_allowed(td.get('Symbol', 'N/A')):
+                                send_discord_signal(trader_info, td)
 
                     # Anything we'd previously flagged as open/pending for this trader
                     # that isn't in this run's tabs anymore has been closed (or cancelled).
@@ -349,7 +352,8 @@ def run_scraper():
                             continue
                         order_num = pos_key[len(trader_prefix):]
                         closed_match = next((td for td in closed_trades if td.get('Order number') == order_num), None)
-                        send_discord_close(name, OPEN_POSITIONS[pos_key], closed_match, order_num)
+                        if paper.is_symbol_allowed(OPEN_POSITIONS[pos_key].get('symbol', 'N/A')):
+                            send_discord_close(name, OPEN_POSITIONS[pos_key], closed_match, order_num)
                         if closed_match:
                             paper_msg = paper.record_close(PAPER_LEDGER, pos_key, closed_match.get('Close price', 'N/A'))
                             if paper_msg:
