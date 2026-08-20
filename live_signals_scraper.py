@@ -22,8 +22,8 @@ if not all([EMAIL, PASSWORD, DISCORD_WEBHOOK]):
 # runtime bounded (at most PRIMARY+FALLBACK traders, not the whole leaderboard)
 # while still finding a signal when the very top of the leaderboard has
 # nothing open in a symbol we actually trade.
-PRIMARY_POOL_SIZE = 15
-FALLBACK_POOL_SIZE = 10
+PRIMARY_POOL_SIZE = 50
+FALLBACK_POOL_SIZE = 0
 
 # We will track already sent signals so we don't spam the same open trade
 STATE_FILE = "sent_signals.json"
