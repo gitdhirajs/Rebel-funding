@@ -24,7 +24,6 @@ STATE_FILE = os.path.join(MT4_FILES_DIR, "account_state.csv")
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 
 LOT_SIZE = 0.01
-MAX_OPEN_POSITIONS = 3
 
 # GOAT 2-Step rules
 STARTING_BALANCE = 2500.0
@@ -219,9 +218,7 @@ def execute_open(symbol, direction):
         if p["symbol"] == mt4_sym:
             return False, f"Position already open for {mt4_sym} (ignoring new alert to avoid hedging/pyramiding)"
     
-    # Optional check for max open positions
-    if len(mt4_state["positions"]) >= MAX_OPEN_POSITIONS:
-        return False, f"Max open positions ({MAX_OPEN_POSITIONS}) reached"
+    # We removed the MAX_OPEN_POSITIONS check based on user request.
 
     can_trade, reason, warnings = check_risk(state, equity)
     for w in warnings:
@@ -326,7 +323,7 @@ def get_dashboard_text():
 │  Max Drawdown      :  ${-(STARTING_BALANCE * MAX_DRAWDOWN_PCT):>+10,.2f}   │  {bar(dd_pct)} {dd_pct:.0f}%
 │  Phase {phase} Target    :  ${target:>+10,.2f}   │  {bar(max(target_pct,0))} {max(target_pct,0):.0f}%
 ├─────────────────────────────────────┤
-│  Open Positions     :     {open_pos} / {MAX_OPEN_POSITIONS} max  │
+│  Open Positions     :     {open_pos:>2}         │
 │  Valid Trading Days :     {valid_days} / {MIN_VALID_DAYS} req  │
 └─────────────────────────────────────┘
 ```"""

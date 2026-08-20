@@ -65,6 +65,23 @@ def save_open_positions(positions):
 
 OPEN_POSITIONS = load_open_positions()
 
+MT4_ANCHOR_FILE = "mt4_anchors.json"
+
+def load_mt4_anchors():
+    if os.path.exists(MT4_ANCHOR_FILE):
+        try:
+            with open(MT4_ANCHOR_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_mt4_anchors(anchors):
+    with open(MT4_ANCHOR_FILE, 'w') as f:
+        json.dump(anchors, f)
+
+MT4_ANCHORS = load_mt4_anchors()
+
 PAPER_LEDGER = paper.load_ledger()
 
 def post_discord(msg_text):
@@ -201,9 +218,26 @@ def group_and_send_signals(signals_list):
 
         # Execute trade on MT4 (only for OPEN signals, not PENDING)
         if stat == 'OPEN' and mt4.is_configured():
+            # Find the top-ranked trader in this group to use as anchor
+            anchor_pos_key = None
+            best_rank = float('inf')
+            for name, (trader, td) in unique_traders.items():
+                try:
+                    rank = int(str(trader.get('rank', '999')).replace('#', '').strip())
+                except ValueError:
+                    rank = 999
+                if rank < best_rank:
+                    best_rank = rank
+                    anchor_pos_key = f"{name}_{td.get('Order number', '')}"
+            
             success, mt4_msg = mt4.execute_open(sym, dir)
             print(f"[MT4] {mt4_msg}")
             if success:
+                if anchor_pos_key:
+                    MT4_ANCHORS[mt4.normalize_symbol(sym)] = anchor_pos_key
+                    save_mt4_anchors(MT4_ANCHORS)
+                    anchor_name = anchor_pos_key.split('_')[0]
+                    mt4_msg += f"\n*(Anchored to top ranker **{anchor_name.upper()}** - will close only when they close)*"
                 post_discord(f"🤖 **AUTO-TRADE**: {mt4_msg}")
 
 def send_discord_close(trader_name, saved_position, closed_match, order_num='N/A'):
@@ -244,17 +278,6 @@ AZALYST PROPFIRM SCANNER  —  POSITION CLOSED (TRADER: {trader_name.upper()})
             print(f"Failed to send close alert to Discord: {r.status_code}")
     except Exception as e:
         print(f"Discord error: {e}")
-
-    # Close matching MT4 position
-    if mt4.is_configured():
-        success, mt4_msg, pl = mt4.execute_close(
-            saved_position.get('symbol', 'N/A'),
-            saved_position.get('direction', 'N/A')
-        )
-        print(f"[MT4] {mt4_msg}")
-        if success:
-            post_discord(f"🤖 **AUTO-CLOSE**: {mt4_msg}")
-
 
 def run_scraper():
     print(f"[{datetime.now()}] Starting scraping cycle...")
@@ -438,6 +461,19 @@ def run_scraper():
                             closed_match = next((td for td in closed_trades if td.get('Order number') == order_num), None)
                             if paper.is_symbol_allowed(OPEN_POSITIONS[pos_key].get('symbol', 'N/A')):
                                 send_discord_close(name, OPEN_POSITIONS[pos_key], closed_match, order_num)
+                                
+                                # Close MT4 ONLY IF this was the anchor trader for this symbol
+                                sym = OPEN_POSITIONS[pos_key].get('symbol', 'N/A')
+                                mt4_sym = mt4.normalize_symbol(sym)
+                                if mt4.is_configured() and MT4_ANCHORS.get(mt4_sym) == pos_key:
+                                    success, mt4_msg, pl = mt4.execute_close(sym, OPEN_POSITIONS[pos_key].get('direction', 'N/A'))
+                                    print(f"[MT4] {mt4_msg}")
+                                    if success:
+                                        post_discord(f"🤖 **AUTO-CLOSE**: {mt4_msg}")
+                                    if mt4_sym in MT4_ANCHORS:
+                                        del MT4_ANCHORS[mt4_sym]
+                                        save_mt4_anchors(MT4_ANCHORS)
+                                
                             if closed_match:
                                 paper_msg = paper.record_close(PAPER_LEDGER, pos_key, closed_match.get('Close price', 'N/A'))
                                 if paper_msg:
@@ -502,6 +538,9 @@ if __name__ == "__main__":
         save_open_positions(OPEN_POSITIONS)
     if not os.path.exists(paper.LEDGER_FILE):
         paper.save_ledger(PAPER_LEDGER)
+
+    if not os.path.exists(MT4_ANCHOR_FILE):
+        save_mt4_anchors(MT4_ANCHORS)
 
     print("Rebel Funding Scraper starting in daemon mode (runs every 15 minutes)...")
     while True:
