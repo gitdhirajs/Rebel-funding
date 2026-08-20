@@ -165,13 +165,23 @@ def check_risk(state, equity):
         return False, state["halt_reason"], warnings
 
     today = _today_str()
-    day_pl = state["daily_pl"].get(today, 0.0)
-    if day_pl <= -DAILY_LIMIT:
-        return False, f"Daily loss limit reached: ${day_pl:.2f} (limit: -${DAILY_LIMIT:.2f})", warnings
+    closed_day_pl = state["daily_pl"].get(today, 0.0)
+    floating_pl = sum(p.get("profit", 0.0) for p in state.get("mt4_positions_cache", [])) if not state.get("mt4_positions_cache") else sum(p.get("profit", 0.0) for p in mt4_state["positions"]) if mt4_state else 0.0
+    
+    # We must use actual mt4_state for the live floating check if available
+    if mt4_state:
+        floating_pl = sum(p.get("profit", 0.0) for p in mt4_state["positions"])
+
+    current_day_pl = closed_day_pl + floating_pl
+
+    if current_day_pl <= -DAILY_LIMIT:
+        state["halted"] = True
+        state["halt_reason"] = f"Daily loss limit breached! Current Daily P/L: ${current_day_pl:.2f}"
+        return False, state["halt_reason"], warnings
 
     warn_limit = STARTING_BALANCE * 0.03
-    if day_pl <= -warn_limit:
-        warnings.append(f"⚠️ Daily P/L at ${day_pl:.2f} — approaching 4% limit (-${DAILY_LIMIT:.2f})")
+    if current_day_pl <= -warn_limit:
+        warnings.append(f"⚠️ Daily P/L at ${current_day_pl:.2f} (including floating) — approaching 4% limit (-${DAILY_LIMIT:.2f})")
 
     target = PHASE1_TARGET if state.get("phase", 1) == 1 else PHASE2_TARGET
     if state["total_pl"] >= target:
@@ -196,6 +206,48 @@ def update_daily_pl(state, pl_change):
     day_threshold = STARTING_BALANCE * VALID_DAY_PCT
     if state["daily_pl"][today] >= day_threshold and today not in state.get("valid_days", []):
         state.setdefault("valid_days", []).append(today)
+
+
+def check_and_enforce_floating_risk():
+    if not is_configured():
+        return False, "Not configured"
+        
+    state = load_executor_state()
+    if state.get("halted"):
+        return False, "Already halted"
+        
+    mt4_state = _read_mt4_state()
+    if not mt4_state:
+        return False, "No MT4 state"
+        
+    equity = mt4_state["equity"]
+    floating_pl = sum(p["profit"] for p in mt4_state["positions"])
+    today = _today_str()
+    closed_day_pl = state["daily_pl"].get(today, 0.0)
+    current_day_pl = closed_day_pl + floating_pl
+    
+    breached = False
+    reason = ""
+    
+    if equity <= EQUITY_FLOOR:
+        breached = True
+        reason = f"Equity ${equity:.2f} breached max drawdown floor ${EQUITY_FLOOR:.2f}"
+    elif current_day_pl <= -DAILY_LIMIT:
+        breached = True
+        reason = f"Floating daily loss (${current_day_pl:.2f}) reached limit (-${DAILY_LIMIT:.2f})"
+        
+    if breached:
+        state["halted"] = True
+        state["halt_reason"] = reason
+        save_executor_state(state)
+        
+        # Emergency close all open positions
+        for p in mt4_state["positions"]:
+            _write_command("CLOSE", p["symbol"], p["type"], p["lots"])
+            
+        return True, reason
+        
+    return False, "OK"
 
 
 # ── Public Interface ─────────────────────────────────────────────────────
@@ -292,18 +344,24 @@ def get_dashboard_text():
     mt4_state = _read_mt4_state()
     
     phase = state.get("phase", 1)
-    total_pl = state.get("total_pl", 0.0)
+    total_pl_closed = state.get("total_pl", 0.0)
     today = _today_str()
-    day_pl = state["daily_pl"].get(today, 0.0)
+    day_pl_closed = state["daily_pl"].get(today, 0.0)
     valid_days = len(state.get("valid_days", []))
     
-    equity = mt4_state["equity"] if mt4_state else STARTING_BALANCE + total_pl
+    floating_pl = sum(p["profit"] for p in mt4_state["positions"]) if mt4_state else 0.0
+    current_day_pl = day_pl_closed + floating_pl
+    current_total_pl = total_pl_closed + floating_pl
+    
+    equity = mt4_state["equity"] if mt4_state else STARTING_BALANCE + current_total_pl
     open_pos = len(mt4_state["positions"]) if mt4_state else 0
     
     target = PHASE1_TARGET if phase == 1 else PHASE2_TARGET
-    target_pct = (total_pl / target * 100) if target > 0 else 0
-    daily_pct = (abs(day_pl) / DAILY_LIMIT * 100) if DAILY_LIMIT > 0 else 0
-    dd_pct = (abs(min(total_pl, 0)) / (STARTING_BALANCE * MAX_DRAWDOWN_PCT) * 100) if total_pl < 0 else 0
+    target_pct = (current_total_pl / target * 100) if target > 0 else 0
+    
+    # Calculate drawdown percentages based on the live floating P/L
+    daily_pct = (abs(min(current_day_pl, 0)) / DAILY_LIMIT * 100) if DAILY_LIMIT > 0 else 0
+    dd_pct = (abs(min(current_total_pl, 0)) / (STARTING_BALANCE * MAX_DRAWDOWN_PCT) * 100) if current_total_pl < 0 else 0
 
     def bar(pct):
         filled = int(min(pct, 100) / 10)
@@ -319,8 +377,8 @@ def get_dashboard_text():
 ├─────────────────────────────────────┤
 │  Starting Balance  :  ${STARTING_BALANCE:>10,.2f}   │
 │  Current Equity    :  ${equity:>10,.2f}   │
-│  Today's P/L       :  ${day_pl:>+10,.2f}   │
-│  Overall P/L       :  ${total_pl:>+10,.2f}   │
+│  Today's P/L       :  ${current_day_pl:>+10,.2f}   │
+│  Overall P/L       :  ${current_total_pl:>+10,.2f}   │
 ├─────────────────────────────────────┤
 │  Daily Limit       :  ${-DAILY_LIMIT:>+10,.2f}   │  {bar(daily_pct)} {daily_pct:.0f}%
 │  Max Drawdown      :  ${-(STARTING_BALANCE * MAX_DRAWDOWN_PCT):>+10,.2f}   │  {bar(dd_pct)} {dd_pct:.0f}%
