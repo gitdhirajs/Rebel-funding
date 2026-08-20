@@ -156,41 +156,28 @@ def _wait_for_ack(cmd_id, timeout=10):
 
 def check_risk(state, equity):
     warnings = []
-    if state.get("halted"):
-        return False, f"Trading halted: {state.get('halt_reason', 'unknown')}", warnings
-
-    if equity <= EQUITY_FLOOR:
-        state["halted"] = True
-        state["halt_reason"] = f"Equity ${equity:.2f} breached max drawdown floor ${EQUITY_FLOOR:.2f}"
-        return False, state["halt_reason"], warnings
 
     today = _today_str()
     closed_day_pl = state["daily_pl"].get(today, 0.0)
-    floating_pl = sum(p.get("profit", 0.0) for p in state.get("mt4_positions_cache", [])) if not state.get("mt4_positions_cache") else sum(p.get("profit", 0.0) for p in mt4_state["positions"]) if mt4_state else 0.0
+    floating_pl = sum(p.get("profit", 0.0) for p in state.get("mt4_positions_cache", []))
     
-    # We must use actual mt4_state for the live floating check if available
-    if mt4_state:
-        floating_pl = sum(p.get("profit", 0.0) for p in mt4_state["positions"])
-
     current_day_pl = closed_day_pl + floating_pl
 
+    if equity <= EQUITY_FLOOR:
+        warnings.append(f"⚠️ ACCOUNT BREACHED: Equity ${equity:.2f} is below max drawdown floor ${EQUITY_FLOOR:.2f}")
+
     if current_day_pl <= -DAILY_LIMIT:
-        state["halted"] = True
-        state["halt_reason"] = f"Daily loss limit breached! Current Daily P/L: ${current_day_pl:.2f}"
-        return False, state["halt_reason"], warnings
+        warnings.append(f"⚠️ ACCOUNT BREACHED: Daily loss limit reached: ${current_day_pl:.2f}")
 
     warn_limit = STARTING_BALANCE * 0.03
-    if current_day_pl <= -warn_limit:
-        warnings.append(f"⚠️ Daily P/L at ${current_day_pl:.2f} (including floating) — approaching 4% limit (-${DAILY_LIMIT:.2f})")
+    if current_day_pl <= -warn_limit and current_day_pl > -DAILY_LIMIT:
+        warnings.append(f"⚠️ Daily P/L at ${current_day_pl:.2f} — approaching 4% limit (-${DAILY_LIMIT:.2f})")
 
     target = PHASE1_TARGET if state.get("phase", 1) == 1 else PHASE2_TARGET
     if state["total_pl"] >= target:
         days_count = len(state.get("valid_days", []))
         if days_count >= MIN_VALID_DAYS:
-            state["halted"] = True
-            state["halt_reason"] = f"Phase {state['phase']} TARGET REACHED! P/L: +${state['total_pl']:.2f} with {days_count} valid days"
-            warnings.append(f"🎉 {state['halt_reason']}")
-            return False, state["halt_reason"], warnings
+            warnings.append(f"🎉 Phase {state['phase']} TARGET REACHED! P/L: +${state['total_pl']:.2f} with {days_count} valid days")
         else:
             warnings.append(f"📊 Profit target reached (+${state['total_pl']:.2f}) but only {days_count}/{MIN_VALID_DAYS} valid trading days")
 
@@ -206,48 +193,6 @@ def update_daily_pl(state, pl_change):
     day_threshold = STARTING_BALANCE * VALID_DAY_PCT
     if state["daily_pl"][today] >= day_threshold and today not in state.get("valid_days", []):
         state.setdefault("valid_days", []).append(today)
-
-
-def check_and_enforce_floating_risk():
-    if not is_configured():
-        return False, "Not configured"
-        
-    state = load_executor_state()
-    if state.get("halted"):
-        return False, "Already halted"
-        
-    mt4_state = _read_mt4_state()
-    if not mt4_state:
-        return False, "No MT4 state"
-        
-    equity = mt4_state["equity"]
-    floating_pl = sum(p["profit"] for p in mt4_state["positions"])
-    today = _today_str()
-    closed_day_pl = state["daily_pl"].get(today, 0.0)
-    current_day_pl = closed_day_pl + floating_pl
-    
-    breached = False
-    reason = ""
-    
-    if equity <= EQUITY_FLOOR:
-        breached = True
-        reason = f"Equity ${equity:.2f} breached max drawdown floor ${EQUITY_FLOOR:.2f}"
-    elif current_day_pl <= -DAILY_LIMIT:
-        breached = True
-        reason = f"Floating daily loss (${current_day_pl:.2f}) reached limit (-${DAILY_LIMIT:.2f})"
-        
-    if breached:
-        state["halted"] = True
-        state["halt_reason"] = reason
-        save_executor_state(state)
-        
-        # Emergency close all open positions
-        for p in mt4_state["positions"]:
-            _write_command("CLOSE", p["symbol"], p["type"], p["lots"])
-            
-        return True, reason
-        
-    return False, "OK"
 
 
 # ── Public Interface ─────────────────────────────────────────────────────
@@ -274,6 +219,7 @@ def execute_open(symbol, direction):
         if p["symbol"] == mt4_sym:
             return False, f"Position already open for {mt4_sym} (ignoring new alert to avoid hedging/pyramiding)"
     
+    # Optional check for max open positions
     if len(mt4_state["positions"]) >= MAX_OPEN_POSITIONS:
         return False, f"Max open positions ({MAX_OPEN_POSITIONS}) reached"
 
@@ -367,10 +313,6 @@ def get_dashboard_text():
         filled = int(min(pct, 100) / 10)
         return "█" * filled + "░" * (10 - filled)
 
-    halted_str = ""
-    if state.get("halted"):
-        halted_str = f"\n│  ⛔ HALTED                           │"
-
     dashboard = f"""```text
 ┌─────────────────────────────────────┐
 │  GOAT FUNDED — PHASE {phase} TRACKER     │
@@ -385,7 +327,7 @@ def get_dashboard_text():
 │  Phase {phase} Target    :  ${target:>+10,.2f}   │  {bar(max(target_pct,0))} {max(target_pct,0):.0f}%
 ├─────────────────────────────────────┤
 │  Open Positions     :     {open_pos} / {MAX_OPEN_POSITIONS} max  │
-│  Valid Trading Days :     {valid_days} / {MIN_VALID_DAYS} req  │{halted_str}
+│  Valid Trading Days :     {valid_days} / {MIN_VALID_DAYS} req  │
 └─────────────────────────────────────┘
 ```"""
     return dashboard

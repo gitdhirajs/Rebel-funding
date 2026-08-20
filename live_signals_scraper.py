@@ -261,15 +261,6 @@ def run_scraper():
     
     NEW_SIGNALS_TO_SEND = []
 
-    # Proactively check for floating equity breaches before doing anything
-    if mt4.is_configured():
-        breached, reason = mt4.check_and_enforce_floating_risk()
-        if breached:
-            post_discord(f"🚨 **EMERGENCY STOP**: {reason}. All trades closed.")
-            print(f"[{datetime.now()}] {reason}")
-            # We still allow the scraper to run to post the final dashboard,
-            # but mt4_bridge will reject any new trades.
-
     # Update worst/best excursion for every still-open paper position using a
     # live market price, independent of anything the scraper finds this run.
     paper.poll_open_positions(PAPER_LEDGER)
