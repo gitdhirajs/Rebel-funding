@@ -30,7 +30,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r requirements.txt metaapi-cloud-sdk
         playwright install --with-deps chromium
 
     - name: Cache sent signals
@@ -40,9 +40,10 @@ jobs:
           sent_signals.json
           open_positions.json
           paper_ledger.json
-        key: signals-cache-v3-${{ github.run_id }}
+          executor_state.json
+        key: signals-cache-v4-${{ github.run_id }}
         restore-keys: |
-          signals-cache-v3-
+          signals-cache-v4-
         save-always: true
 
     - name: Run scraper
@@ -50,5 +51,7 @@ jobs:
         REBEL_EMAIL: ${{ secrets.REBEL_EMAIL }}
         REBEL_PASSWORD: ${{ secrets.REBEL_PASSWORD }}
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        METAAPI_TOKEN: ${{ secrets.METAAPI_TOKEN }}
+        METAAPI_ACCOUNT_ID: ${{ secrets.METAAPI_ACCOUNT_ID }}
       run: |
         python live_signals_scraper.py
