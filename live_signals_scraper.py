@@ -375,13 +375,6 @@ def run_scraper():
                                     pass
 
                         win_rate_pct = (wins / total_closed) * 100 if total_closed > 0 else 0.0
-                        
-                        if win_rate_pct < 65.0:
-                            print(f"Skipping {name} - Win Rate {win_rate_pct:.1f}% is below 65% minimum.")
-                            page.keyboard.press("Escape")
-                            time.sleep(1)
-                            continue
-                            
                         win_rate_str = f"{win_rate_pct:.1f}%" if total_closed > 0 else "N/A"
 
                         profit_val = profit_text.replace('$', '').replace(',', '').strip()
