@@ -6,7 +6,7 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 import paper_trading as paper
-import mt5_executor as mt5
+import mt4_bridge as mt4
 
 # --- CONFIGURATION ---
 EMAIL = os.environ.get("REBEL_EMAIL")
@@ -156,12 +156,12 @@ def group_and_send_signals(signals_list):
         except Exception as e:
             print(f"Discord error: {e}")
 
-        # Execute trade on MT5 (only for OPEN signals, not PENDING)
-        if stat == 'OPEN' and mt5.is_configured():
-            success, mt5_msg = mt5.execute_open(sym, dir)
-            print(f"[MT5] {mt5_msg}")
+        # Execute trade on MT4 (only for OPEN signals, not PENDING)
+        if stat == 'OPEN' and mt4.is_configured():
+            success, mt4_msg = mt4.execute_open(sym, dir)
+            print(f"[MT4] {mt4_msg}")
             if success:
-                post_discord(f"🤖 **AUTO-TRADE**: {mt5_msg}")
+                post_discord(f"🤖 **AUTO-TRADE**: {mt4_msg}")
 
 def send_discord_close(trader_name, saved_position, closed_match, order_num='N/A'):
     """Alert that a previously-notified open/pending trade is no longer open."""
@@ -202,15 +202,15 @@ AZALYST PROPFIRM SCANNER  —  POSITION CLOSED (TRADER: {trader_name.upper()})
     except Exception as e:
         print(f"Discord error: {e}")
 
-    # Close matching MT5 position
-    if mt5.is_configured():
-        success, mt5_msg, pl = mt5.execute_close(
+    # Close matching MT4 position
+    if mt4.is_configured():
+        success, mt4_msg, pl = mt4.execute_close(
             saved_position.get('symbol', 'N/A'),
             saved_position.get('direction', 'N/A')
         )
-        print(f"[MT5] {mt5_msg}")
+        print(f"[MT4] {mt4_msg}")
         if success:
-            post_discord(f"🤖 **AUTO-CLOSE**: {mt5_msg}")
+            post_discord(f"🤖 **AUTO-CLOSE**: {mt4_msg}")
 
 
 def run_scraper():
@@ -444,20 +444,28 @@ def run_scraper():
     if summary_msg:
         post_discord(summary_msg)
 
-    # Post MT5 dashboard if executor is configured
-    if mt5.is_configured():
+    # Post MT4 dashboard if executor is configured
+    if mt4.is_configured():
         try:
-            dashboard = mt5.get_dashboard_text()
+            dashboard = mt4.get_dashboard_text()
             post_discord(dashboard)
         except Exception as e:
-            print(f"[MT5] Dashboard error: {e}")
+            print(f"[MT4] Dashboard error: {e}")
 
 if __name__ == "__main__":
-    run_scraper()
-
     if not os.path.exists(STATE_FILE):
         save_sent_signals(SENT_SIGNALS)
     if not os.path.exists(POSITIONS_FILE):
         save_open_positions(OPEN_POSITIONS)
     if not os.path.exists(paper.LEDGER_FILE):
         paper.save_ledger(PAPER_LEDGER)
+
+    print("Rebel Funding Scraper starting in daemon mode (runs every 15 minutes)...")
+    while True:
+        try:
+            run_scraper()
+        except Exception as e:
+            print(f"Error in main loop: {e}")
+        
+        # Sleep for 15 minutes (900 seconds)
+        time.sleep(900)
