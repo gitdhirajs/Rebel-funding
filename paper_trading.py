@@ -30,7 +30,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 LEDGER_FILE = "paper_ledger.json"
 SIM_DAYS = 7
 
-TIERS = {"50K": 50000.0}
+TIERS = {"2.5K": 2500.0}
 DAILY_LOSS_PCT = 0.04     # GOAT 2-Step: 4% daily drawdown
 TOTAL_LOSS_PCT = 0.10     # GOAT 2-Step: 10% static max drawdown
 PHASE_TARGET_PCT = 0.08   # GOAT 2-Step Phase 1 profit target (Phase 2 is 6%)

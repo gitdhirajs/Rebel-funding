@@ -40,9 +40,9 @@ jobs:
           sent_signals.json
           open_positions.json
           paper_ledger.json
-        key: signals-cache-v2-${{ github.run_id }}
+        key: signals-cache-v3-${{ github.run_id }}
         restore-keys: |
-          signals-cache-v2-
+          signals-cache-v3-
         save-always: true
 
     - name: Run scraper
