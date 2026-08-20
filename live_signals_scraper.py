@@ -125,23 +125,35 @@ def send_discord_signal(trader, trade_data):
     
     ping_str = "<@1363959528194052118>\n" if status == 'OPEN' else ""
     
+    other_traders = []
+    seen_traders = set()
+    for pk, p_info in OPEN_POSITIONS.items():
+        if p_info.get('symbol') == trade_data.get('Symbol') and p_info.get('direction') == trade_data.get('Direction'):
+            t_name = pk.rpartition('_')[0]
+            if t_name and t_name != trader_name and t_name not in seen_traders:
+                seen_traders.add(t_name)
+                rank = p_info.get('rank', 'N/A')
+                wr = p_info.get('win_rate', 'N/A')
+                other_traders.append(f"{t_name} (Rank #{rank}, WR: {wr})")
+                
+    others_str = ""
+    if other_traders:
+        others_str = "\n  Also traded by :\n    - " + "\n    - ".join(other_traders)
+    
     msg_text = f"""{ping_str}```text
-AZALYST PROPFIRM SCANNER  —  NEW SIGNALS (TRADER: {trader_name.upper()})
+AZALYST PROPFIRM SCANNER  —  {symbol.strip()} {direction}
 {now_str}
 --------------------------------------------------------------
-{symbol}  {direction}
-  >> VERDICT     : [SIGNAL]
+  >> TRADER      : {trader_name.upper()}
+  >> Rank        : #{trader_rank}
+  >> Win Rate    : {trader_winrate}
+  >> %Gain       : {trader_gain}{others_str}
+
   Order #        : {order_num}
   Location       : {status}
   Entry          : {entry}
   Stop Loss      : {sl}
   Take Profit    : {tp}
-
-[Trader Stats]
-Leaderboard Rank : #{trader_rank}
-Win Rate         : {trader_winrate}
-%Gain            : {trader_gain}
-Total Profit     : {trader_profit}
 ```"""
 
     try:
@@ -350,6 +362,8 @@ def run_scraper():
                                     OPEN_POSITIONS[pos_key] = {
                                         'symbol': td.get('Symbol', 'N/A'),
                                         'direction': td.get('Direction', 'N/A'),
+                                        'rank': trader_info.get('rank', 'N/A'),
+                                        'win_rate': trader_info.get('win_rate', 'N/A')
                                     }
                                     if status_label == 'OPEN':
                                         paper.record_open(
