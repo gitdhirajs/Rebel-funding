@@ -123,7 +123,7 @@ def send_discord_signal(trader, trade_data):
     
     now_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime('%d %b %Y   %H:%M IST')
     
-    ping_str = "<@1363959528194052118>\n" if status == 'OPEN' else ""
+    ping_str = "<@1363959528194052118>\n" if (status == 'OPEN' and SIGNALS_SENT_THIS_RUN == 0) else ""
     
     other_traders = []
     seen_traders = set()
@@ -187,8 +187,8 @@ def send_discord_close(trader_name, saved_position, closed_match, order_num='N/A
     else:
         detail = "  Result         : UNKNOWN (could not confirm outcome, check manually)"
 
-    msg_text = f"""<@1363959528194052118>
-```text
+    ping_str = "<@1363959528194052118>\n" if SIGNALS_SENT_THIS_RUN == 0 else ""
+    msg_text = f"""{ping_str}```text
 AZALYST PROPFIRM SCANNER  —  POSITION CLOSED (TRADER: {trader_name.upper()})
 {now_str}
 --------------------------------------------------------------
