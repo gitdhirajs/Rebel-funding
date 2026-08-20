@@ -43,6 +43,7 @@ def save_sent_signals(signals):
 
 SENT_SIGNALS = load_sent_signals()
 SIGNALS_SENT_THIS_RUN = 0
+NOTIFIED_THIS_RUN_GROUPS = set()
 
 # We also track which open/pending trades we've already notified about, per
 # trader, so we can tell when one of them disappears (i.e. gets closed).
@@ -102,6 +103,7 @@ def send_discord_signal(trader, trade_data):
         trader_profit = str(profit_val)
     
     global SIGNALS_SENT_THIS_RUN
+    global NOTIFIED_THIS_RUN_GROUPS
     
     # Unique ID based on trader and order number
     trade_id = f"{trader_name}_{trade_data.get('Order number', '')}_{trade_data.get('Status', '')}"
@@ -111,6 +113,14 @@ def send_discord_signal(trader, trade_data):
     symbol = str(trade_data.get('Symbol', 'N/A')).ljust(15)
     direction = str(trade_data.get('Direction', 'N/A')).upper()
     status = str(trade_data.get('Status', 'N/A')).upper()
+    
+    group_id = f"{trader_name}_{symbol.strip()}_{direction}_{status}"
+    if group_id in NOTIFIED_THIS_RUN_GROUPS:
+        SENT_SIGNALS.add(trade_id)
+        save_sent_signals(SENT_SIGNALS)
+        return
+    NOTIFIED_THIS_RUN_GROUPS.add(group_id)
+    
     order_num = str(trade_data.get('Order number', 'N/A'))
 
     def fmt_price(val):
