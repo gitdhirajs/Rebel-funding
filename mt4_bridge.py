@@ -217,6 +217,11 @@ def execute_open(symbol, direction):
 
     equity = mt4_state["equity"]
     
+    mt4_sym = normalize_symbol(symbol)
+    for p in mt4_state["positions"]:
+        if p["symbol"] == mt4_sym:
+            return False, f"Position already open for {mt4_sym} (ignoring new alert to avoid hedging/pyramiding)"
+    
     if len(mt4_state["positions"]) >= MAX_OPEN_POSITIONS:
         return False, f"Max open positions ({MAX_OPEN_POSITIONS}) reached"
 

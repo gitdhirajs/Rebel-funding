@@ -94,6 +94,49 @@ def extract_visible_trade_tables(page):
 def group_and_send_signals(signals_list):
     global SIGNALS_SENT_THIS_RUN
     
+    # --- MAJORITY VOTING ---
+    # For OPEN signals, only alert/trade the direction that has the most traders.
+    open_tally = {}
+    for trader, td in signals_list:
+        stat = str(td.get('Status', 'N/A')).upper()
+        if stat == 'OPEN':
+            sym = str(td.get('Symbol', 'N/A')).strip()
+            dir = str(td.get('Direction', 'N/A')).upper()
+            name = trader['name']
+            
+            if sym not in open_tally:
+                open_tally[sym] = {"BUY": set(), "SELL": set()}
+            if dir in ["BUY", "SELL"]:
+                open_tally[sym][dir].add(name)
+                
+    majority_directions = {}
+    for sym, counts in open_tally.items():
+        buy_cnt = len(counts["BUY"])
+        sell_cnt = len(counts["SELL"])
+        if buy_cnt > sell_cnt:
+            majority_directions[sym] = "BUY"
+        elif sell_cnt > buy_cnt:
+            majority_directions[sym] = "SELL"
+        else:
+            majority_directions[sym] = "NONE" # Tie (discard both)
+            
+    filtered_signals = []
+    for trader, td in signals_list:
+        stat = str(td.get('Status', 'N/A')).upper()
+        sym = str(td.get('Symbol', 'N/A')).strip()
+        dir = str(td.get('Direction', 'N/A')).upper()
+        
+        if stat == 'OPEN':
+            if majority_directions.get(sym) == dir:
+                filtered_signals.append((trader, td))
+            else:
+                print(f"Skipping {sym} {dir} by {trader['name']} (Not the majority direction or it's a tie)")
+        else:
+            filtered_signals.append((trader, td))
+            
+    signals_list = filtered_signals
+    # ------------------------
+
     groups = {}
     for trader, td in signals_list:
         name = trader['name']
