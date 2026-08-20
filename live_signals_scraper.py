@@ -90,94 +90,70 @@ def extract_visible_trade_tables(page):
             trades.append(trade_data)
     return trades
 
-def send_discord_signal(trader, trade_data):
-    trader_name = trader['name']
-    trader_rank = trader.get('rank', 'N/A')
-    trader_winrate = trader.get('win_rate', 'N/A')
-    trader_gain = trader.get('gain', 'N/A')
-
-    profit_val = trader.get('total_return', 0)
-    try:
-        trader_profit = f"{float(profit_val):+.2f}"
-    except (ValueError, TypeError):
-        trader_profit = str(profit_val)
-    
+def group_and_send_signals(signals_list):
     global SIGNALS_SENT_THIS_RUN
-    global NOTIFIED_THIS_RUN_GROUPS
     
-    # Unique ID based on trader and order number
-    trade_id = f"{trader_name}_{trade_data.get('Order number', '')}_{trade_data.get('Status', '')}"
-    if trade_id in SENT_SIGNALS:
-        return
+    groups = {}
+    for trader, td in signals_list:
+        name = trader['name']
+        trade_id = f"{name}_{td.get('Order number', '')}_{td.get('Status', '')}"
+        if trade_id in SENT_SIGNALS:
+            continue
+            
+        sym = str(td.get('Symbol', 'N/A')).strip()
+        dir = str(td.get('Direction', 'N/A')).upper()
+        stat = str(td.get('Status', 'N/A')).upper()
+        key = (sym, dir, stat)
         
-    symbol = str(trade_data.get('Symbol', 'N/A')).ljust(15)
-    direction = str(trade_data.get('Direction', 'N/A')).upper()
-    status = str(trade_data.get('Status', 'N/A')).upper()
-    
-    group_id = f"{trader_name}_{symbol.strip()}_{direction}_{status}"
-    if group_id in NOTIFIED_THIS_RUN_GROUPS:
-        SENT_SIGNALS.add(trade_id)
-        save_sent_signals(SENT_SIGNALS)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append((trader, td))
+
+    if not groups:
         return
-    NOTIFIED_THIS_RUN_GROUPS.add(group_id)
-    
-    order_num = str(trade_data.get('Order number', 'N/A'))
 
     def fmt_price(val):
         if pd.isna(val) or str(val).strip() == '': return 'N/A'
         return str(val)
 
-    entry = fmt_price(trade_data.get('Open price', 'N/A')).rjust(12)
-    sl = fmt_price(trade_data.get('Stop loss', 'N/A')).rjust(12)
-    tp = fmt_price(trade_data.get('Take profit', 'N/A')).rjust(12)
-    
-    now_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime('%d %b %Y   %H:%M IST')
-    
-    ping_str = "<@1363959528194052118>\n" if (status == 'OPEN' and SIGNALS_SENT_THIS_RUN == 0) else ""
-    
-    other_traders = []
-    seen_traders = set()
-    for pk, p_info in OPEN_POSITIONS.items():
-        if p_info.get('symbol') == trade_data.get('Symbol') and p_info.get('direction') == trade_data.get('Direction'):
-            t_name = pk.rpartition('_')[0]
-            if t_name and t_name != trader_name and t_name not in seen_traders:
-                seen_traders.add(t_name)
-                rank = p_info.get('rank', 'N/A')
-                wr = p_info.get('win_rate', 'N/A')
-                other_traders.append(f"{t_name} (Rank #{rank}, WR: {wr})")
-                
-    others_str = ""
-    if other_traders:
-        others_str = "\n  Also traded by :\n    - " + "\n    - ".join(other_traders)
-    
-    msg_text = f"""{ping_str}```text
-AZALYST PROPFIRM SCANNER  —  {symbol.strip()} {direction}
-{now_str}
---------------------------------------------------------------
-  >> TRADER      : {trader_name.upper()}
-  >> Rank        : #{trader_rank}
-  >> Win Rate    : {trader_winrate}
-  >> %Gain       : {trader_gain}{others_str}
-
-  Order #        : {order_num}
-  Location       : {status}
-  Entry          : {entry}
-  Stop Loss      : {sl}
-  Take Profit    : {tp}
-```"""
-
-    try:
-        r = requests.post(DISCORD_WEBHOOK, json={"content": msg_text})
-        if r.status_code in [200, 204]:
-            print(f"[{datetime.now()}] Sent signal for {trader_name} - {trade_data.get('Symbol')}")
-            SIGNALS_SENT_THIS_RUN += 1
+    for (sym, dir, stat), items in groups.items():
+        unique_traders = {}
+        for trader, td in items:
+            name = trader['name']
+            if name not in unique_traders:
+                unique_traders[name] = (trader, td)
+            trade_id = f"{name}_{td.get('Order number', '')}_{td.get('Status', '')}"
             SENT_SIGNALS.add(trade_id)
-            save_sent_signals(SENT_SIGNALS)
-        else:
-            print(f"Failed to send to Discord: {r.status_code}")
-    except Exception as e:
-        print(f"Discord error: {e}")
-
+            
+        save_sent_signals(SENT_SIGNALS)
+        
+        now_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime('%d %b %Y   %H:%M IST')
+        ping_str = "<@1363959528194052118>\n" if (stat == 'OPEN' and SIGNALS_SENT_THIS_RUN == 0) else ""
+        
+        msg = f"{ping_str}```text\nAZALYST PROPFIRM SCANNER  —  {sym} {dir} [{stat}]\n{now_str}\n--------------------------------------------------------------\nTRADERS IN THIS POSITION:\n\n"
+        
+        idx = 1
+        for name, (trader, td) in unique_traders.items():
+            rank = trader.get('rank', 'N/A')
+            wr = trader.get('win_rate', 'N/A')
+            entry = fmt_price(td.get('Open price', 'N/A'))
+            sl = fmt_price(td.get('Stop loss', 'N/A'))
+            tp = fmt_price(td.get('Take profit', 'N/A'))
+            msg += f"{idx}. {name.upper()} (Rank #{rank}, WR: {wr})\n"
+            msg += f"   Entry: {entry}  |  SL: {sl}  |  TP: {tp}\n\n"
+            idx += 1
+            
+        msg += "--------------------------------------------------------------\n```"
+        
+        try:
+            r = requests.post(DISCORD_WEBHOOK, json={"content": msg})
+            if r.status_code in [200, 204]:
+                print(f"[{datetime.now()}] Sent grouped signal for {sym} {dir}")
+                SIGNALS_SENT_THIS_RUN += 1
+            else:
+                print(f"Failed to send to Discord: {r.status_code}")
+        except Exception as e:
+            print(f"Discord error: {e}")
 
 def send_discord_close(trader_name, saved_position, closed_match, order_num='N/A'):
     """Alert that a previously-notified open/pending trade is no longer open."""
@@ -220,7 +196,9 @@ AZALYST PROPFIRM SCANNER  —  POSITION CLOSED (TRADER: {trader_name.upper()})
 
 
 def run_scraper():
-    print(f"[{datetime.now()}] Starting live signal scraper...")
+    print(f"[{datetime.now()}] Starting scraping cycle...")
+    
+    NEW_SIGNALS_TO_SEND = []
 
     # Update worst/best excursion for every still-open paper position using a
     # live market price, independent of anything the scraper finds this run.
@@ -386,7 +364,7 @@ def run_scraper():
                                 # Only alert on symbols this account actually trades
                                 # (metals/crypto filtered out - see paper.ALLOWED_SYMBOLS).
                                 if paper.is_symbol_allowed(td.get('Symbol', 'N/A')):
-                                    send_discord_signal(trader_info, td)
+                                    NEW_SIGNALS_TO_SEND.append((trader_info, td))
 
                         # Anything we'd previously flagged as open/pending for this trader
                         # that isn't in this run's tabs anymore has been closed (or cancelled).
@@ -426,6 +404,8 @@ def run_scraper():
             elif found_in_primary:
                 print(f"Found allowed-symbol open/pending trade(s) in the top {len(primary_traders)} - skipping fallback pool.")
                 
+            if NEW_SIGNALS_TO_SEND:
+                group_and_send_signals(NEW_SIGNALS_TO_SEND)
         except Exception as e:
             print(f"An error occurred during scraping: {e}")
         finally:
