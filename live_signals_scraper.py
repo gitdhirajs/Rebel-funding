@@ -239,6 +239,8 @@ def group_and_send_signals(signals_list):
                     anchor_name = anchor_pos_key.split('_')[0]
                     mt4_msg += f"\n*(Anchored to top ranker **{anchor_name.upper()}** - will close only when they close)*"
                 post_discord(f"🤖 **AUTO-TRADE**: {mt4_msg}")
+            else:
+                post_discord(f"⚠️ **MT4 ERROR**: {mt4_msg} (Symbol: {sym})")
 
 def send_discord_close(trader_name, saved_position, closed_match, order_num='N/A'):
     """Alert that a previously-notified open/pending trade is no longer open."""
@@ -470,6 +472,8 @@ def run_scraper():
                                     print(f"[MT4] {mt4_msg}")
                                     if success:
                                         post_discord(f"🤖 **AUTO-CLOSE**: {mt4_msg}")
+                                    else:
+                                        post_discord(f"⚠️ **MT4 CLOSE ERROR**: {mt4_msg} (Symbol: {sym})")
                                     if mt4_sym in MT4_ANCHORS:
                                         del MT4_ANCHORS[mt4_sym]
                                         save_mt4_anchors(MT4_ANCHORS)

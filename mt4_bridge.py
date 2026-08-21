@@ -197,7 +197,8 @@ def update_daily_pl(state, pl_change):
 # ── Public Interface ─────────────────────────────────────────────────────
 
 def is_configured():
-    # If we can read the state file, or at least the directory exists, we're good
+    if MT4_FILES_DIR == ".":
+        return os.path.exists(STATE_FILE)
     return os.path.exists(MT4_FILES_DIR)
 
 
