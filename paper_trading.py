@@ -62,6 +62,7 @@ SYMBOL_SPECS = {
     "EURJPY": {"pip_size": 0.01, "pip_value": 0.65, "yf": "EURJPY=X"},  # approx
     "BTCUSDT": {"pip_size": 1.0, "pip_value": 0.1, "yf": "BTC-USD"},    # approx
     "USTEC": {"pip_size": 1.0, "pip_value": 0.1, "yf": "NQ=F"},         # approx
+    "MNQ": {"pip_size": 1.0, "pip_value": 0.1, "yf": "NQ=F"},           # approx
 }
 DEFAULT_SPEC = {"pip_size": 1.0, "pip_value": 1.0, "yf": None}
 
@@ -119,7 +120,7 @@ def save_ledger(ledger):
 # are intentionally excluded per account risk tolerance.
 ALLOWED_SYMBOLS = {
     # safest - indices & single stocks, worst-case 0.01-lot loss ~$1-12
-    "US500", "USTEC", "USTEC.V", "DE30.V", "UK100.V", "F40.V", "STOXX50.V",
+    "US500", "USTEC", "USTEC.V", "MNQ", "MNQ.V", "DE30.V", "UK100.V", "F40.V", "STOXX50.V",
     "AAPL.OQ", "AMZN.OQ", "TSLA.OQ", "1NGAS",
     # moderate - major/minor FX, worst-case 0.01-lot loss ~$15-37
     "EUR/USD", "EURUSD", "GBP/USD", "GBPUSD", "AUD/USD", "AUDUSD",
