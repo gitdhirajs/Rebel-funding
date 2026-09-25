@@ -1,14 +1,17 @@
 """
 Paper-trading simulator for the live signals feed.
 
-Mirrors every real signal/close event onto a single $2.5K virtual account at
-the minimum lot size (0.1), using Goat Funded Trader's real "2-Step GOAT"
-evaluation rules (help.goatfundedtrader.com/en/articles/13575348-2-step-goat-model):
+Mirrors every real signal/close event onto a virtual account at the minimum
+lot size (0.1), using prop firm evaluation rules:
   - Daily drawdown: 4% (static, off starting balance)
   - Max drawdown: 10% (static floor at 90% of starting balance)
   - Phase 1 profit target: 8%; Phase 2 profit target: 6%
   - Min. 3 valid trading days per phase (a valid day = that day's P/L >= 0.5%
     of starting balance)
+
+The simulation runs INDEFINITELY until the challenge is either PASSED (profit
+target met + min valid days) or FAILED (max drawdown breached). There is NO
+automatic time-based reset. Use reset_ledger() to manually start over.
 
 While a signal is open, every scraper run (~every 15 min) polls an
 independent live market price (via yfinance - NOT the source site's own
@@ -28,12 +31,11 @@ from datetime import datetime, timezone, timedelta
 IST = timezone(timedelta(hours=5, minutes=30))
 
 LEDGER_FILE = "paper_ledger.json"
-SIM_DAYS = 7
 
 TIERS = {"2.5K": 2500.0}
-DAILY_LOSS_PCT = 0.04     # GOAT 2-Step: 4% daily drawdown
-TOTAL_LOSS_PCT = 0.10     # GOAT 2-Step: 10% static max drawdown
-PHASE_TARGET_PCT = 0.08   # GOAT 2-Step Phase 1 profit target (Phase 2 is 6%)
+DAILY_LOSS_PCT = 0.04     # 4% daily drawdown
+TOTAL_LOSS_PCT = 0.10     # 10% static max drawdown
+PHASE_TARGET_PCT = 0.08   # Phase 1 profit target (Phase 2 is 6%)
 VALID_DAY_PCT = 0.005     # a trading day only counts if that day's P/L >= 0.5% of start
 MIN_VALID_DAYS = 3        # required valid trading days to clear a phase
 
@@ -84,7 +86,7 @@ def today_str():
 
 def _new_tier_state():
     return {"balance": 0.0, "total_pl": 0.0, "daily": {}, "failed": False, "breaches": [],
-            "valid_days": [], "passed": False}
+            "valid_days": [], "passed": False, "completed": False}
 
 
 def load_ledger():
@@ -104,7 +106,6 @@ def load_ledger():
         "trade_log": [],
         "open_positions": {},
         "start_date": today_str(),
-        "week_summary_sent": False,
     }
 
 
@@ -297,25 +298,71 @@ def status_line(ledger):
         t = ledger["tiers"][tier]
         day_pl = t["daily"].get(day, {}).get("pl", 0.0)
         flag = " FAILED" if t["failed"] else (" PASSED" if t["passed"] else "")
+        start = ledger.get("start_date", "unknown")
+        if start != "unknown":
+            days_running = (datetime.now(IST) - datetime.strptime(start, '%Y-%m-%d').replace(tzinfo=IST)).days
+        else:
+            days_running = 0
         parts.append(f"  [{tier}] Bal {t['balance']:.2f}  Today {day_pl:+.2f}/-{daily_limit(tier):.0f}  "
                       f"Total {t['total_pl']:+.2f}/+{phase_target(tier):.0f} (fail<-{total_limit(tier):.0f})  "
-                      f"ValidDays {len(t['valid_days'])}/{MIN_VALID_DAYS}{flag}")
+                      f"ValidDays {len(t['valid_days'])}/{MIN_VALID_DAYS}  Day#{days_running}{flag}")
     return "\n".join(parts)
 
 
-def week_summary_if_due(ledger):
-    if ledger.get("week_summary_sent"):
-        return None
-    start = datetime.strptime(ledger["start_date"], '%Y-%m-%d').replace(tzinfo=IST)
-    if (datetime.now(IST) - start).days < SIM_DAYS:
-        return None
-    ledger["week_summary_sent"] = True
-    save_ledger(ledger)
-    trades = ledger["trade_log"]
-    wins = [t for t in trades if t["pl"] > 0]
-    lines = [f"[PAPER] 7-DAY SIMULATION COMPLETE - {len(trades)} trades ({len(wins)}W/{len(trades)-len(wins)}L)"]
+def check_challenge_complete(ledger):
+    """Check if any tier has passed or failed. Returns a Discord message if
+    a tier just completed (first time), or None if still in progress.
+    This replaces the old week_summary_if_due() - no more time-based resets."""
+    messages = []
     for tier in TIERS:
-        t = ledger["tiers"][tier]
-        result = "FAILED" if t["failed"] else ("profitable" if t["total_pl"] > 0 else "net loss")
-        lines.append(f"  [{tier}] {result}  Total P/L {t['total_pl']:+.2f}  Final balance {t['balance']:.2f}")
-    return "\n".join(lines)
+        t = ledger["tiers"].get(tier)
+        if t is None or t.get("completed"):
+            continue
+
+        trades = ledger["trade_log"]
+        wins = [tr for tr in trades if tr["pl"] > 0]
+        start = ledger.get("start_date", "unknown")
+        if start != "unknown":
+            days_running = (datetime.now(IST) - datetime.strptime(start, '%Y-%m-%d').replace(tzinfo=IST)).days
+        else:
+            days_running = 0
+
+        if t["passed"]:
+            t["completed"] = True
+            save_ledger(ledger)
+            messages.append(
+                f"🎉 [PAPER] **CHALLENGE PASSED** [{tier}]\n"
+                f"  {len(trades)} trades ({len(wins)}W/{len(trades)-len(wins)}L) over {days_running} days\n"
+                f"  Total P/L {t['total_pl']:+.2f}  Final balance {t['balance']:.2f}\n"
+                f"  Valid days: {len(t['valid_days'])}/{MIN_VALID_DAYS}  ✅"
+            )
+        elif t["failed"]:
+            t["completed"] = True
+            save_ledger(ledger)
+            messages.append(
+                f"❌ [PAPER] **CHALLENGE FAILED** [{tier}]\n"
+                f"  {len(trades)} trades ({len(wins)}W/{len(trades)-len(wins)}L) over {days_running} days\n"
+                f"  Total P/L {t['total_pl']:+.2f}  Final balance {t['balance']:.2f}"
+            )
+
+    return "\n".join(messages) if messages else None
+
+
+def reset_ledger():
+    """Manually reset the paper ledger for a fresh challenge start.
+    Call this only when you explicitly want to start over."""
+    fresh = {
+        "tiers": {t: {**_new_tier_state(), "balance": start} for t, start in TIERS.items()},
+        "trade_log": [],
+        "open_positions": {},
+        "start_date": today_str(),
+    }
+    save_ledger(fresh)
+    return fresh
+
+
+# Keep backward compatibility - old code may still call this
+def week_summary_if_due(ledger):
+    """DEPRECATED: No longer resets after 7 days. Now just checks for
+    pass/fail conditions. Use check_challenge_complete() instead."""
+    return check_challenge_complete(ledger)
